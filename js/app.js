@@ -690,7 +690,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6.5 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.6 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -890,7 +890,7 @@ document.addEventListener('submit', async (ev) => {
   const traduz = (e) => ({ 'auth/invalid-credential': 'senha incorreta (ou ainda não criada no PC)', 'auth/wrong-password': 'senha incorreta', 'auth/weak-password': 'senha fraca: use pelo menos 6 caracteres', 'auth/requires-recent-login': 'saia e entre de novo com o Google antes de trocar a senha', 'auth/operation-not-allowed': 'login por senha ainda não está ativado no Firebase', 'auth/too-many-requests': 'muitas tentativas; espere alguns minutos' }[e.code] || e.message);
   try {
     if (f.dataset.act === 'entrarSenha') await fb.entrarComSenha(senha);
-    else { await fb.definirSenha(senha); f.reset(); aviso('Senha salva. No iPad, entre com ela no app instalado.'); }
+    else { const r = await fb.definirSenha(senha); f.reset(); aviso(r === 'verificar' ? 'Senha salva. Abra o e-mail de verificação que o Firebase mandou para o seu Gmail e confirme; só depois o app libera os dados.' : 'Senha salva. No iPad, entre com ela no app instalado.'); }
   } catch (e) { aviso('Não deu certo: ' + traduz(e)); }
   bt.disabled = false;
 });

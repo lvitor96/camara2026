@@ -3,7 +3,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
   onAuthStateChanged, signOut,
-  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword,
+  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword, sendEmailVerification,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -47,7 +47,10 @@ export const entrarComSenha = (senha) => signInWithEmailAndPassword(auth, DONO, 
 export async function definirSenha(senha) {
   const u = auth.currentUser;
   if (u.providerData.some((p) => p.providerId === 'password')) return updatePassword(u, senha);
-  return linkWithCredential(u, EmailAuthProvider.credential(DONO, senha));
+  await linkWithCredential(u, EmailAuthProvider.credential(DONO, senha));
+  // Ligar a senha desmarca o e-mail como verificado; as regras do banco exigem verificação.
+  await u.reload();
+  if (!auth.currentUser.emailVerified) { auth.languageCode = 'pt-BR'; await sendEmailVerification(auth.currentUser); return 'verificar'; }
 }
 
 export const sair = () => signOut(auth);
