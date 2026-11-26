@@ -69,7 +69,7 @@ label.btn{cursor:pointer}
 .tarefa.feita{background:var(--ac2);border-color:var(--ac2)}
 .nota{display:block;margin:12px 0}
 .nota span{display:block;font-size:14px;color:var(--mut);margin-bottom:4px}
-textarea,input[type=text],input:not([type]),input[type=number],select{width:100%;border:1px solid #d6d3d1;border-radius:10px;padding:10px 12px;background:#fff;min-height:44px}
+textarea,input[type=text],input[type=password],input:not([type]),input[type=number],select{width:100%;border:1px solid #d6d3d1;border-radius:10px;padding:10px 12px;background:#fff;min-height:44px}
 
 .cards3,.cards4{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
 .cards4{grid-template-columns:repeat(4,minmax(0,1fr))}
