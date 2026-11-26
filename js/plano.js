@@ -87,6 +87,7 @@ export const MATERIAIS = [
     { t: 'Vol. 1 — CF, LC 95, RICD e Regimento Comum', u: 'https://drive.google.com/file/d/1eaCKfuiQ7IthTIOWWl-2t5Ueu5WsAKp-/view' },
     { t: 'Vol. 2 — 8.112, 9.784, 8.429, LAI, LGPD, 9.610, Dec. 9.203, 14.133', u: 'https://drive.google.com/file/d/1Anh5PFMOsJ9d912OHQ5niXNX2dOXAcIJ/view' },
     { t: 'Pasta de material próprio (Apêndice, Cadernos de Português e de Lógica, plano)', u: 'https://drive.google.com/drive/folders/1Kwyz8x3eEedT0o9mD25-GDC5SdjINeQU' },
+    { t: 'Peça técnica — guia de treino (discursiva)', u: 'https://claude.ai/artifact/2DtjeHWPxj5hJUwnvDRupz' },
     { t: 'Baralho Anki — números da lei (.apkg)', u: 'https://drive.google.com/file/d/1yaRrZ65UuB9zKj0-oPDf8L3exDWMQV3O/view' },
   ] },
   { g: 'Provas e fontes', itens: [
@@ -98,6 +99,7 @@ export const MATERIAIS = [
     { t: 'Plano de estudos interativo', u: 'https://claude.ai/artifact/GUu4aVC5CRxFyHuQ1gUdha' },
     { t: 'Questões-base', u: 'https://claude.ai/artifact/KmKf5APott7pd5uapxH3Bz' },
     { t: 'TI e Dados', u: 'https://claude.ai/artifact/ER3xwVP6o8zM5mCiaya5eG' },
+    { t: 'Dir. Administrativo · Poderes (quiz)', u: 'https://claude.ai/artifact/RGgydUwS2xgRrc5YenaUuQ' },
     { t: 'Caderno de erros', u: 'https://claude.ai/artifact/SzkHCzv5PsaUW2ohmpEFvD' },
   ] },
 ];

@@ -20,6 +20,8 @@ const local = {
 const GRAUS = { c: 'Certeza', d: 'Dúvida', k: 'Chute' };
 const MOTIVOS = { cont: 'Falta de conteúdo', leit: 'Leitura do item', peg: 'Pegadinha da banca', chute: 'Chute', aten: 'Desatenção' };
 const INTERVALOS = [1, 3, 7, 15];
+const BANCOS = { leg: 'Legislação e Português', ti: 'TI e Dados', da: 'Dir. Administrativo' };
+const BK = Object.keys(BANCOS);
 
 // ---------- estado ----------
 const S = {
@@ -27,6 +29,7 @@ const S = {
   banco: null,
   leg: { hist: [], it: {}, cal: {} },
   ti: { hist: [], it: {}, cal: {} },
+  da: { hist: [], it: {}, cal: {} },
   plano: { chk: {}, dias: {}, sim: {} },
   cad: { A: {}, dom: {}, mot: {}, rev: {} },
   ensaios: [],
@@ -34,7 +37,7 @@ const S = {
   foco: local.get('foco', false),
   q: null, ens: null, filtros: local.get('filtros', { banco: 'leg', n: '', o: '', modo: 'novos', qtd: 20 }),
 };
-const DOCS = { leg: 'dados/leg', ti: 'dados/ti', plano: 'dados/plano', cad: 'dados/caderno' };
+const DOCS = { leg: 'dados/leg', ti: 'dados/ti', da: 'dados/da', plano: 'dados/plano', cad: 'dados/caderno' };
 
 const timers = {};
 function salvar(chave) {
@@ -53,10 +56,10 @@ function aviso(msg) {
 
 // ---------- banco ----------
 function itemKey(b, d) { return b + ':' + d.id; }
-function itens(b) { return S.banco ? (b === 'ti' ? S.banco.ti : S.banco.leg) : []; }
+function itens(b) { return S.banco ? S.banco[b] || [] : []; }
 function acharItem(chave) {
   const [b, id] = chave.split(':');
-  return itens(b).find((d) => String(d.id) === id) || null;
+  return itens(b).find((d) => String(d.id) === id) || (S.banco && (S.banco.cadx || []).find((d) => d.b_ === b && String(d.id) === id)) || null;
 }
 const origem = (d) => d.o || 'aut';
 const ORIG = { aut: 'Autorais', real: 'Cebraspe (provas reais)', conv: 'FGV convertidas' };
@@ -65,22 +68,22 @@ async function carregarBanco() {
   const meta = await fb.ler('banco/meta');
   if (!meta) return null;
   const partes = await Promise.all(Array.from({ length: meta.partes }, (_, i) => fb.ler('banco/p' + i)));
-  const b = { leg: [], ti: [], TX: {}, TXL: meta.TXL || {}, ORIG: meta.ORIG || ORIG, gerado: meta.gerado };
-  partes.forEach((p) => { if (!p) return; b.leg.push(...(p.leg || [])); b.ti.push(...(p.ti || [])); Object.assign(b.TX, p.TX || {}); });
+  const b = { leg: [], ti: [], da: [], cadx: [], TX: {}, TXL: meta.TXL || {}, ORIG: meta.ORIG || ORIG, gerado: meta.gerado };
+  partes.forEach((p) => { if (!p) return; for (const k of [...BK, 'cadx']) b[k].push(...(p[k] || [])); Object.assign(b.TX, p.TX || {}); });
   return b;
 }
 
 async function importarBanco(json) {
   const pares = [];
   const tam = (o) => JSON.stringify(o).length;
-  let atual = { leg: [], ti: [], TX: {} }, n = 0;
-  const fechar = () => { pares.push(['banco/p' + n, atual]); n++; atual = { leg: [], ti: [], TX: {} }; };
+  const novo = () => ({ leg: [], ti: [], da: [], cadx: [], TX: {} });
+  let atual = novo(), n = 0;
+  const fechar = () => { pares.push(['banco/p' + n, atual]); n++; atual = novo(); };
   const LIM = 700000;
-  for (const d of json.leg) { if (tam(atual) + tam(d) > LIM) fechar(); atual.leg.push(d); }
-  for (const d of json.ti) { if (tam(atual) + tam(d) > LIM) fechar(); atual.ti.push(d); }
+  for (const k of [...BK, 'cadx']) for (const d of json[k] || []) { if (tam(atual) + tam(d) > LIM) fechar(); atual[k].push(d); }
   for (const [k, v] of Object.entries(json.TX || {})) { if (tam(atual) + tam(v) > LIM) fechar(); atual.TX[k] = v; }
   fechar();
-  pares.push(['banco/meta', { partes: n, gerado: json.gerado || new Date().toISOString(), TXL: json.TXL || {}, ORIG: json.ORIG || ORIG, nleg: json.leg.length, nti: json.ti.length }]);
+  pares.push(['banco/meta', { partes: n, gerado: json.gerado || new Date().toISOString(), TXL: json.TXL || {}, ORIG: json.ORIG || ORIG, nleg: json.leg.length, nti: json.ti.length, nda: (json.da || []).length }]);
   await fb.gravarVarios(pares);
 }
 
@@ -121,12 +124,12 @@ function registrar(b, d, resp, grau) {
 
 // ---------- métricas ----------
 function liquidoSessoes() {
-  const all = [...S.leg.hist.map((h) => ({ ...h, b_: 'leg' })), ...S.ti.hist.map((h) => ({ ...h, b_: 'ti' }))];
+  const all = BK.flatMap((b) => S[b].hist.map((h, i) => ({ ...h, b_: b, ts: h.ts || i })));
   return all.sort((a, b) => (a.ts || 0) - (b.ts || 0));
 }
 function acertoPorFonte() {
   const out = {};
-  for (const b of ['leg', 'ti']) {
+  for (const b of BK) {
     for (const d of itens(b)) {
       const r = S[b].it[d.id];
       if (!r || !r.s) continue;
@@ -138,7 +141,7 @@ function acertoPorFonte() {
 }
 function calibracaoTotal() {
   const t = { c: [0, 0], d: [0, 0], k: [0, 0] };
-  for (const b of ['leg', 'ti']) for (const bl of Object.values(S[b].cal || {})) for (const g of Object.keys(t)) if (bl[g]) { t[g][0] += bl[g][0]; t[g][1] += bl[g][1]; }
+  for (const b of BK) for (const bl of Object.values(S[b].cal || {})) for (const g of Object.keys(t)) if (bl[g]) { t[g][0] += bl[g][0]; t[g][1] += bl[g][1]; }
   for (const e of S.ensaios) { const r = resultadoEnsaio(e); if (r) for (const g of Object.keys(t)) { t[g][0] += r.cal[g][0]; t[g][1] += r.cal[g][1]; } }
   return t;
 }
@@ -310,7 +313,7 @@ function vQuestoes() {
   const opF = fontes(f.banco).map((n) => `<option ${f.n === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
   const disp = filtrar().length;
   return `<h1>Questões</h1><form class="filtros" data-form="filtros">
-    <label>Banco<select name="banco"><option value="leg" ${f.banco === 'leg' ? 'selected' : ''}>Legislação e Português (${S.banco.leg.length})</option><option value="ti" ${f.banco === 'ti' ? 'selected' : ''}>TI e Dados (${S.banco.ti.length})</option></select></label>
+    <label>Banco<select name="banco">${BK.map((b) => `<option value="${b}" ${f.banco === b ? 'selected' : ''}>${BANCOS[b]} (${itens(b).length})</option>`).join('')}</select></label>
     <label>Fonte<select name="n"><option value="">Todas</option>${opF}</select></label>
     <label>Origem<select name="o"><option value="">Todas</option>${Object.entries(ORIG).map(([k, v]) => `<option value="${k}" ${f.o === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
     <label>Quais<select name="modo">${[['novos', 'Ainda não vistos'], ['erros', 'Só os que já errei'], ['todos', 'Todos']].map(([k, v]) => `<option value="${k}" ${f.modo === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
@@ -334,6 +337,7 @@ function textoProva(d) {
   return `<details class="txp" open><summary>Texto da prova${u ? ` · <a href="${esc(u)}" target="_blank" rel="noopener">caderno em PDF</a>` : ''}</summary><pre>${esc(S.banco.TX[d.x])}</pre></details>`;
 }
 function baseLei(d) {
+  if (d.J && typeof d.J === 'string' && !d.L) return `<div class="lei"><div class="lh">Fundamento</div><div class="lt">${esc(d.J)}</div></div>`;
   if (S.q.banco === 'ti') return (d.FS ? `<p class="ref">Fonte: ${d.FU ? `<a href="${esc(d.FU)}" target="_blank" rel="noopener">${esc(d.FS)}</a>` : esc(d.FS)}</p>` : '') + (d.F ? `<div class="lei"><div class="lt">${esc(d.F)}</div></div>` : '');
   if (!d.L && !d.J) return d.k ? `<div class="lei"><b>Texto-base:</b> “…${esc(d.k)}…”</div>` : '';
   return `<div class="lei"><div class="lh">O que a lei diz${d.R ? ' — ' + esc(d.R) : ''}</div>${d.L ? `<div class="lt">${esc(d.L)}</div>` : ''}${d.N ? `<div class="lj">${esc(d.N)}</div>` : ''}</div>`;
@@ -413,7 +417,7 @@ function vErros() {
 // ----- Desempenho -----
 function vDesempenho() {
   const ens = S.ensaios.slice().sort((a, b) => (a.data < b.data ? -1 : 1));
-  const resolvidos = Object.values(S.leg.it).reduce((s, r) => s + r.s, 0) + Object.values(S.ti.it).reduce((s, r) => s + r.s, 0);
+  const resolvidos = BK.reduce((t, b) => t + Object.values(S[b].it).reduce((s, r) => s + r.s, 0), 0);
   const ultE = ens.filter((e) => notaEnsaio(e)).slice(-1)[0]; const nE = ultE && notaEnsaio(ultE);
   const fontesAc = acertoPorFonte().slice(0, 12).map((f) => `<div class="barra"><span>${esc(f.n)}</span><div class="bt"><div style="width:${Math.max(0, f.ac) * 100}%"></div></div><span class="n">${Math.round(f.ac * 100)}%</span><span class="mut n">${f.s}</span></div>`).join('');
   const linhasEns = ens.map((e) => { const n = notaEnsaio(e); return `<tr><td>${dm(e.data)}</td><td>${esc(e.nome)}</td><td class="n ${n && n.p1 < CORTES.p1 ? 'alerta' : ''}">${n ? n.p1 : '—'}</td><td class="n ${n && n.p2 < CORTES.p2 ? 'alerta' : ''}">${n ? n.p2 : '—'}</td><td class="n ${n && n.total < CORTES.total ? 'alerta' : ''}">${n ? n.total : '—'}</td><td><a href="#" data-act="abrirEnsaio" data-id="${e.id}">${e.gab || e.resumo ? 'ver' : 'continuar'}</a></td></tr>`; }).join('');
@@ -496,7 +500,7 @@ function vMateriais() {
 function vAjustes() {
   const b = S.banco;
   return `<h1>Ajustes</h1><section><h2>Conta</h2><p>${esc(S.user.email)}</p><button class="btn sec" data-act="sair">Sair</button></section>
-  <section><h2>Banco de questões</h2><p>${b ? `${b.leg.length} itens de legislação e Português, ${b.ti.length} de TI. Gerado em ${esc((b.gerado || '').slice(0, 10))}.` : 'Ainda não importado.'}</p>
+  <section><h2>Banco de questões</h2><p>${b ? `${b.leg.length} itens de legislação e Português, ${b.ti.length} de TI, ${b.da.length} de Direito Administrativo. Gerado em ${esc((b.gerado || '').slice(0, 10))}.` : 'Ainda não importado.'}</p>
   <label class="btn sec">Importar banco.json<input type="file" accept=".json,application/json" data-act="impBanco" hidden></label></section>
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
@@ -506,7 +510,7 @@ function vAjustes() {
 
 async function importarProgresso(p) {
   const mesclaIt = (a, b) => { for (const [k, v] of Object.entries(b || {})) { const o = a[k]; a[k] = !o ? v : { ...o, s: Math.max(o.s, v.s), e: Math.max(o.e, v.e) }; } };
-  for (const b of ['leg', 'ti']) if (p[b]) {
+  for (const b of BK) if (p[b]) {
     const ja = new Set(S[b].hist.map((h) => h.ts + '|' + h.f + '|' + h.n));
     (p[b].hist || []).forEach((h) => { if (!ja.has(h.ts + '|' + h.f + '|' + h.n)) S[b].hist.push(h); });
     S[b].hist.sort((x, y) => (x.ts || 0) - (y.ts || 0));
@@ -542,7 +546,7 @@ document.addEventListener('click', async (ev) => {
     case 'sair': await fb.sair(); location.reload(); break;
     case 'foco': S.foco = !S.foco; local.set('foco', S.foco); render(); break;
     case 'dia': S.diaSel = a.dataset.d; render(); break;
-    case 'iniciar': { const l = embaralhar(filtrar()).slice(0, +S.filtros.qtd); const f = S.filtros; iniciarSessao(l, (f.n || (f.banco === 'ti' ? 'TI e Dados' : 'Legislação')) + (f.modo === 'erros' ? ' · meus erros' : ''), f.banco); break; }
+    case 'iniciar': { const l = embaralhar(filtrar()).slice(0, +S.filtros.qtd); const f = S.filtros; iniciarSessao(l, (f.n || BANCOS[f.banco]) + (f.modo === 'erros' ? ' · meus erros' : ''), f.banco); break; }
     case 'grau': if (q && !q.feito) { q.gsel = a.dataset.g; render(); } break;
     case 'resp': if (q && !q.feito) { const r = a.dataset.a; q.ans[q.i] = r; q.grau[q.i] = r === 'B' ? '' : q.gsel; q.feito = true; registrar(q.banco, q.items[q.i], r, q.grau[q.i]); salvar(q.banco); salvar('cad'); render(); } break;
     case 'prox': if (q) { if (q.i < q.items.length - 1) { q.i++; q.feito = false; q.gsel = null; render(); window.scrollTo(0, 0); } else fecharSessao(); } break;
@@ -550,10 +554,9 @@ document.addEventListener('click', async (ev) => {
     case 'dominei': S.cad.dom[a.dataset.k] = new Date().toISOString(); delete S.cad.rev[a.dataset.k]; salvar('cad'); render(); break;
     case 'revisar': {
       const ks = pendentesRevisao();
-      const leg = ks.filter((k) => k.startsWith('leg:')).map(acharItem).filter(Boolean);
-      const ti = ks.filter((k) => k.startsWith('ti:')).map(acharItem).filter(Boolean);
-      if (leg.length) iniciarSessao(embaralhar(leg).slice(0, 40), 'Revisão do caderno', 'leg', true);
-      else if (ti.length) iniciarSessao(embaralhar(ti).slice(0, 40), 'Revisão do caderno · TI', 'ti', true);
+      const por = BK.map((b) => [b, ks.filter((k) => k.startsWith(b + ':')).map(acharItem).filter(Boolean)]).sort((x, y) => y[1].length - x[1].length);
+      const [b, l] = por[0];
+      if (l.length) iniciarSessao(embaralhar(l).slice(0, 40), 'Revisão do caderno · ' + BANCOS[b], b, true);
       break;
     }
     case 'novoEnsaio': novoEnsaio(); break;
@@ -575,7 +578,7 @@ document.addEventListener('click', async (ev) => {
     }
     case 'ensSair': e.rodando = false; salvarEnsaio(); clearInterval(timers.rel); S.ens = null; ir('desempenho'); break;
     case 'exportar': {
-      const blob = new Blob([JSON.stringify({ leg: S.leg, ti: S.ti, plano: S.plano, cad: S.cad, ensaios: S.ensaios, em: new Date().toISOString() })], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify({ leg: S.leg, ti: S.ti, da: S.da, plano: S.plano, cad: S.cad, ensaios: S.ensaios, em: new Date().toISOString() })], { type: 'application/json' });
       const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = 'camara2026-copia-' + hojeISO() + '.json'; l.click(); URL.revokeObjectURL(u); break;
     }
     default: break;
@@ -608,7 +611,7 @@ document.addEventListener('change', async (ev) => {
     try {
       const j = JSON.parse(await f.text());
       if (act === 'impBanco') {
-        if (!j.leg || !j.ti) throw new Error('arquivo não parece ser o banco');
+        if (!j.leg || !j.ti || !j.da) throw new Error('arquivo não parece ser o banco');
         aviso('Importando o banco…'); await importarBanco(j); S.banco = await carregarBanco(); aviso('Banco importado.');
       } else { aviso('Importando o progresso…'); await importarProgresso(j); aviso('Progresso importado.'); }
       render();
@@ -627,12 +630,12 @@ document.addEventListener('input', (ev) => {
 window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v && v !== S.view && (VIEWS[v] || v === 'ajustes')) ir(v); });
 
 // ---------- inicialização ----------
-const vazio = { leg: { hist: [], it: {}, cal: {} }, ti: { hist: [], it: {}, cal: {} }, plano: { chk: {}, dias: {}, sim: {} }, cad: { A: {}, dom: {}, mot: {}, rev: {} } };
+const vazio = { leg: { hist: [], it: {}, cal: {} }, ti: { hist: [], it: {}, cal: {} }, da: { hist: [], it: {}, cal: {} }, plano: { chk: {}, dias: {}, sim: {} }, cad: { A: {}, dom: {}, mot: {}, rev: {} } };
 async function carregarTudo() {
   S.pronto = false; render();
   try {
-    const [leg, ti, plano, cad, ens, banco] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco()]);
-    S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) };
+    const [leg, ti, da, plano, cad, ens, banco] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco()]);
+    S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) }; S.da = { ...vazio.da, ...(da || {}) };
     S.plano = { ...vazio.plano, ...(plano || {}) }; S.cad = { ...vazio.cad, ...(cad || {}) };
     S.ensaios = ens; S.banco = banco;
     S.pronto = true;
