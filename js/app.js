@@ -505,30 +505,36 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 3 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
   const mesclaIt = (a, b) => { for (const [k, v] of Object.entries(b || {})) { const o = a[k]; a[k] = !o ? v : { ...o, s: Math.max(o.s, v.s), e: Math.max(o.e, v.e) }; } };
+  const gravacoes = [];
   for (const b of BK) if (p[b]) {
     const ja = new Set(S[b].hist.map((h) => h.ts + '|' + h.f + '|' + h.n));
     (p[b].hist || []).forEach((h) => { if (!ja.has(h.ts + '|' + h.f + '|' + h.n)) S[b].hist.push(h); });
     S[b].hist.sort((x, y) => (x.ts || 0) - (y.ts || 0));
     mesclaIt(S[b].it, p[b].it);
-    salvar(b);
+    S[b].v = Date.now(); gravacoes.push([DOCS[b], { ...S[b] }]);
   }
   if (p.plano) {
     Object.assign(S.plano.chk, p.plano.chk || {});
     for (const [d, v] of Object.entries(p.plano.dias || {})) S.plano.dias[d] = { ...(v || {}), ...(S.plano.dias[d] || {}) };
     Object.assign(S.plano.sim, p.plano.sim || {});
-    salvar('plano');
+    S.plano.v = Date.now(); gravacoes.push([DOCS.plano, { ...S.plano }]);
   }
   if (p.cad) {
     for (const [k, v] of Object.entries(p.cad.A || {})) if (!S.cad.A[k]) { S.cad.A[k] = v; S.cad.rev[k] = S.cad.rev[k] || { box: 0, next: hojeISO() }; }
     Object.assign(S.cad.dom, p.cad.dom || {});
-    salvar('cad');
+    for (const k of Object.keys(S.cad.dom)) delete S.cad.rev[k];
+    S.cad.v = Date.now(); gravacoes.push([DOCS.cad, { ...S.cad }]);
   }
-  for (const e of p.ensaios || []) if (!S.ensaios.find((x) => x.id === e.id)) { S.ensaios.push(e); await fb.gravar('ensaios/' + e.id, e); }
+  for (const e of p.ensaios || []) if (!S.ensaios.find((x) => x.id === e.id)) { S.ensaios.push(e); gravacoes.push(['ensaios/' + e.id, e]); }
+  await fb.gravarVarios(gravacoes);
+  // confere no servidor
+  const ok = await Promise.all(gravacoes.map(([c]) => fb.ler(c).then((d) => !!d)));
+  return { docs: gravacoes.length, confirmados: ok.filter(Boolean).length, hist: BK.reduce((t, b) => t + S[b].hist.length, 0), erros: Object.keys(S.cad.A).length };
 }
 
 // ---------- eventos ----------
@@ -612,8 +618,8 @@ document.addEventListener('change', async (ev) => {
       const j = JSON.parse(await f.text());
       if (act === 'impBanco') {
         if (!j.leg || !j.ti || !j.da) throw new Error('arquivo não parece ser o banco');
-        aviso('Importando o banco…'); await importarBanco(j); S.banco = await carregarBanco(); aviso('Banco importado.');
-      } else { aviso('Importando o progresso…'); await importarProgresso(j); aviso('Progresso importado.'); }
+        aviso('Importando o banco…'); await importarBanco(j); S.banco = await carregarBanco(); aviso(`Banco importado: ${BK.map((b) => S.banco[b].length + ' ' + b).join(', ')}.`);
+      } else { aviso('Importando o progresso…'); const r = await importarProgresso(j); aviso(`Progresso importado: ${r.confirmados} de ${r.docs} documentos gravados · ${r.hist} sessões · ${r.erros} erros no caderno.`); }
       render();
     } catch (er) { aviso('Falha na importação: ' + er.message); }
   }
