@@ -141,3 +141,5 @@ textarea,input[type=text],input:not([type]),input[type=number],select{width:100%
 .carregando{color:var(--mut);margin:20vh auto;text-align:center}
 #toast{position:fixed;left:50%;bottom:calc(90px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--tx);color:#fff;padding:10px 16px;border-radius:10px;opacity:0;pointer-events:none;transition:opacity .2s;z-index:10;max-width:90vw}
 #toast.on{opacity:1}
+
+.pill.st-e{border-color:#d97706;background:#fffbeb;color:#92400e}.pill.st-q{border-color:#2563eb;background:#eff6ff;color:#1e40af}.pill.st-d{border-color:var(--ac);background:var(--ac2);color:var(--ac)}

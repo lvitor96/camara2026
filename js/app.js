@@ -1,5 +1,6 @@
 // Câmara 2026 — app de estudo (plano, questões, caderno de erros, ensaios, desempenho).
 import * as fb from './fb.js';
+import { EDITAL, STATUS } from './edital.js';
 import { PROVA, CORTES, SEMANAS, roteiro, semanaDe, ROTULO_DIA, resumoDia, MATERIAIS } from './plano.js';
 
 // ---------- utilidades ----------
@@ -199,7 +200,7 @@ function nav() {
 }
 
 function ir(view) {
-  if (!VIEWS[view] && !['ajustes', 'sessao', 'ensaio', 'discursiva', 'peca'].includes(view)) view = 'hoje';
+  if (!VIEWS[view] && !['ajustes', 'sessao', 'ensaio', 'discursiva', 'peca', 'edital'].includes(view)) view = 'hoje';
   S.view = view; if (VIEWS[view] || view === 'ajustes') local.set('view', view);
   render();
   window.scrollTo(0, 0);
@@ -210,7 +211,7 @@ function render() {
   const m = $('#main');
   if (!S.user) { m.innerHTML = telaLogin(); return; }
   if (!S.pronto) { m.innerHTML = '<p class="carregando">Carregando seus dados…</p>'; return; }
-  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, discursiva: vDiscursiva, peca: vPeca, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
+  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, discursiva: vDiscursiva, edital: vEdital, peca: vPeca, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
   m.innerHTML = v();
   if (S.view === 'ensaio') posEnsaio();
   if (S.view === 'peca') posPeca();
@@ -431,6 +432,7 @@ function vDesempenho() {
   <section><h2>Ensaios</h2><p class="mut">Cortes: ${CORTES.p1} em P1, ${CORTES.p2} em P2, ${CORTES.total} no total. Em vermelho, abaixo do corte.</p>
   <table class="tab"><thead><tr><th>Data</th><th>Ensaio</th><th class="n">P1</th><th class="n">P2</th><th class="n">Total</th><th></th></tr></thead><tbody>${linhasEns || '<tr><td colspan="6" class="mut">Nenhum ensaio.</td></tr>'}</tbody></table>
   <button class="btn" data-act="novoEnsaio">Novo ensaio</button>${projecao(ens)}</section>
+  <section><h2>Cobertura do edital</h2>${resumoEdital()}<p><button class="btn sec" data-view="edital">Abrir o edital</button></p></section>
   <section><h2>Discursiva</h2>${resumoDiscursiva()}<p><button class="btn sec" data-view="discursiva">Abrir discursiva</button></p></section>
   <section><h2>Questões</h2>${graficoLiquido(liquidoSessoes().slice(-20))}</section>
   <section><h2>Acerto por fonte</h2><p class="mut">Percentual líquido de acerto (vistas − erros) / vistas, e número de respostas.</p>${fontesAc || '<p class="mut">Sem dados.</p>'}</section>
@@ -505,6 +507,24 @@ function projecao(ens) {
   const reg = (ys) => { const n = ys.length, mx = x.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n; let num = 0, den = 0; x.forEach((xi, i) => { num += (xi - mx) * (ys[i] - my); den += (xi - mx) ** 2; }); const b = den ? num / den : 0; return Math.round(my + b * (alvo - mx)); };
   const p1 = reg(pts.map((p) => p.n.p1)), p2 = reg(pts.map((p) => p.n.p2));
   return `<p>Tendência dos ${pts.length} ensaios, projetada para 17/01: <b class="${p1 < CORTES.p1 ? 'alerta' : ''}">P1 ≈ ${p1}</b> · P2 ≈ ${p2}. É só a reta dos pontos que existem: ensaios com itens já vistos inflam a tendência.</p>`;
+}
+
+
+// ----- Cobertura do edital -----
+const cobKey = (d, c) => d + '|' + c;
+function contaEdital(disc) {
+  const cob = S.plano.cob || {}; const c = { '': 0, e: 0, q: 0, d: 0 };
+  disc.itens.forEach(([cod]) => { c[cob[cobKey(disc.d, cod)] || '']++; });
+  return c;
+}
+function resumoEdital() {
+  return EDITAL.map((disc) => { const c = contaEdital(disc), n = disc.itens.length, feito = n - c['']; return `<div class="barra"><span>${esc(disc.d)} <small>${disc.p}</small></span><div class="bt"><div style="width:${(feito / n) * 100}%"></div></div><span class="n">${feito}/${n}</span><span class="mut n">${c.d}✓</span></div>`; }).join('') + '<p class="mut">Itens com algum estudo / total. ✓ = marcados como dominados.</p>';
+}
+function vEdital() {
+  const cob = S.plano.cob || {};
+  return `<h1>Cobertura do edital</h1><p class="mut">Toque no status para avançar: não visto → estudado → com questões → dominado. Itens com * têm redação resumida: confira no PDF do edital.</p>
+  ${EDITAL.map((disc) => { const c = contaEdital(disc); return `<section><h2>${esc(disc.d)} <small>${disc.p}</small></h2><p class="mut">${c['']} não vistos · ${c.e} estudados · ${c.q} com questões · ${c.d} dominados</p>
+    <table class="tab"><tbody>${disc.itens.map(([cod, t]) => { const k = cob[cobKey(disc.d, cod)] || ''; const st = STATUS.find((x) => x.k === k); return `<tr><td class="n" style="width:70px">${esc(cod)}</td><td>${esc(t)}</td><td style="width:150px"><button class="pill st-${k || 'n'}" data-act="cob" data-k="${esc(cobKey(disc.d, cod))}">${st.t}</button></td></tr>`; }).join('')}</tbody></table></section>`; }).join('')}`;
 }
 
 // ----- Discursiva -----
@@ -585,7 +605,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 4 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 5 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -647,6 +667,7 @@ document.addEventListener('click', async (ev) => {
     }
     case 'novoEnsaio': novoEnsaio(); break;
     case 'novaPeca': novaPeca(); break;
+    case 'cob': { S.plano.cob = S.plano.cob || {}; const at = S.plano.cob[a.dataset.k] || ''; const i = STATUS.findIndex((x) => x.k === at); const nx = STATUS[(i + 1) % STATUS.length].k; if (nx) S.plano.cob[a.dataset.k] = nx; else delete S.plano.cob[a.dataset.k]; salvar('plano'); render(); break; }
     case 'abrirPeca': { const x = S.pecas.find((y) => y.id === a.dataset.id); if (x) { S.peca = { ...x, rodando: false }; ir('peca'); } break; }
     case 'pecaRelogio': S.peca.rodando = !S.peca.rodando; salvarPeca(); render(); break;
     case 'pecaQuesito': S.peca.comandos.push({ t: '', max: '', obt: '' }); salvarPeca(); render(); break;
