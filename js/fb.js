@@ -3,6 +3,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/fireba
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
   onAuthStateChanged, signOut,
+  signInWithEmailAndPassword, EmailAuthProvider, linkWithCredential, updatePassword,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
@@ -24,16 +25,29 @@ export function observarLogin(cb) {
   return onAuthStateChanged(auth, cb);
 }
 
+// App instalado na tela de início (iPhone/iPad): o login do Google por redirecionamento falha
+// (o iOS separa o armazenamento), então ali o caminho é a senha.
+export const instalado = !!(navigator.standalone || (window.matchMedia && matchMedia('(display-mode: standalone)').matches));
+
 export async function entrar() {
   const p = new GoogleAuthProvider();
   p.setCustomParameters({ login_hint: DONO, prompt: 'select_account' });
   try {
     await signInWithPopup(auth, p);
   } catch (e) {
-    if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) {
+    if (!instalado && e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) {
       await signInWithRedirect(auth, p);
     } else throw e;
   }
+}
+
+export const entrarComSenha = (senha) => signInWithEmailAndPassword(auth, DONO, senha);
+
+// Cria (ou troca) a senha da mesma conta: mesmo usuário, mesmos dados.
+export async function definirSenha(senha) {
+  const u = auth.currentUser;
+  if (u.providerData.some((p) => p.providerId === 'password')) return updatePassword(u, senha);
+  return linkWithCredential(u, EmailAuthProvider.credential(DONO, senha));
 }
 
 export const sair = () => signOut(auth);

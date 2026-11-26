@@ -153,3 +153,4 @@ textarea,input[type=text],input:not([type]),input[type=number],select{width:100%
 .tab.ed .stc{width:150px;text-align:right}
 .tab.ed tr.pai td{background:var(--alt);font-weight:600}
 @media (max-width:600px){.tab.ed .stc{width:96px}.tab.ed .pill{padding:6px 8px;font-size:12px;white-space:nowrap;min-height:36px}}
+.linha input{flex:1 1 200px;min-width:0}

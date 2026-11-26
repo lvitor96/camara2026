@@ -242,7 +242,10 @@ function render() {
 // ---------- telas ----------
 function telaLogin() {
   return `<section class="login"><h1>Câmara 2026</h1><p>Plano, questões, caderno de erros e ensaios, sincronizados entre celular, iPad e PC.</p>
-  <button class="btn" data-act="entrar">Entrar com Google</button><p class="mut">Só a conta ${esc(fb.DONO)} tem acesso aos dados.</p></section>`;
+  <button class="btn" data-act="entrar">Entrar com Google</button>
+  <p class="mut">${fb.instalado ? 'No app instalado no iPad/iPhone, o login do Google costuma falhar. Use a senha do app (criada em Ajustes, no PC).' : 'Ou entre com a senha do app (criada em Ajustes).'}</p>
+  <form data-act="entrarSenha" class="linha"><input type="password" name="senha" placeholder="Senha do app" autocomplete="current-password" required minlength="6"><button class="btn sec">Entrar com senha</button></form>
+  <p class="mut">Só a conta ${esc(fb.DONO)} tem acesso aos dados.</p></section>`;
 }
 
 function trilha(hoje) {
@@ -669,13 +672,15 @@ function vMateriais() {
 }
 function vAjustes() {
   const b = S.banco;
-  return `<h1>Ajustes</h1><section><h2>Conta</h2><p>${esc(S.user.email)}</p><button class="btn sec" data-act="sair">Sair</button></section>
+  return `<h1>Ajustes</h1><section><h2>Conta</h2><p>${esc(S.user.email)}</p><button class="btn sec" data-act="sair">Sair</button>
+  <h3>Senha do app</h3><p class="mut">Para entrar no app instalado no iPad e no iPhone, onde o login do Google falha. É a mesma conta: mesmos dados. Mínimo de 6 caracteres.</p>
+  <form data-act="definirSenha" class="linha"><input type="password" name="senha" placeholder="Nova senha" autocomplete="new-password" required minlength="6"><button class="btn sec">Salvar senha</button></form></section>
   <section><h2>Banco de questões</h2><p>${b ? `${b.leg.length} itens de legislação e Português, ${b.ti.length} de TI, ${b.da.length} de Direito Administrativo. Gerado em ${esc((b.gerado || '').slice(0, 10))}.` : 'Ainda não importado.'}</p>
   <label class="btn sec">Importar banco.json<input type="file" accept=".json,application/json" data-act="impBanco" hidden></label></section>
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6.2 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.3 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -864,3 +869,16 @@ fb.observarLogin((u) => {
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 render();
+
+// Formulários de senha (login no app instalado e criação da senha em Ajustes)
+document.addEventListener('submit', async (ev) => {
+  const f = ev.target.closest('form[data-act]'); if (!f) return;
+  ev.preventDefault();
+  const senha = f.senha.value; const bt = f.querySelector('button'); bt.disabled = true;
+  const traduz = (e) => ({ 'auth/invalid-credential': 'senha incorreta (ou ainda não criada no PC)', 'auth/wrong-password': 'senha incorreta', 'auth/weak-password': 'senha fraca: use pelo menos 6 caracteres', 'auth/requires-recent-login': 'saia e entre de novo com o Google antes de trocar a senha', 'auth/operation-not-allowed': 'login por senha ainda não está ativado no Firebase', 'auth/too-many-requests': 'muitas tentativas; espere alguns minutos' }[e.code] || e.message);
+  try {
+    if (f.dataset.act === 'entrarSenha') await fb.entrarComSenha(senha);
+    else { await fb.definirSenha(senha); f.reset(); aviso('Senha salva. No iPad, entre com ela no app instalado.'); }
+  } catch (e) { aviso('Não deu certo: ' + traduz(e)); }
+  bt.disabled = false;
+});
