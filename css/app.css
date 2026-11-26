@@ -143,3 +143,13 @@ textarea,input[type=text],input:not([type]),input[type=number],select{width:100%
 #toast.on{opacity:1}
 
 .pill.st-e{border-color:#d97706;background:#fffbeb;color:#92400e}.pill.st-q{border-color:#2563eb;background:#eff6ff;color:#1e40af}.pill.st-d{border-color:var(--ac);background:var(--ac2);color:var(--ac)}
+.chips{display:inline-flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.chip{font-size:12px;background:#eef2ff;color:#3730a3;border-radius:999px;padding:1px 8px}
+.sem{margin:8px 0}
+.semhead{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--alt);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;min-height:48px;cursor:pointer;text-align:left}
+.semhead.on{background:var(--ac2);border-color:var(--ac)}
+.tab.ed td{vertical-align:top}
+.tab.ed .cod{width:56px;color:var(--mut)}
+.tab.ed .stc{width:150px;text-align:right}
+.tab.ed tr.pai td{background:var(--alt);font-weight:600}
+@media (max-width:600px){.tab.ed .stc{width:96px}.tab.ed .pill{padding:6px 8px;font-size:12px;white-space:nowrap;min-height:36px}}

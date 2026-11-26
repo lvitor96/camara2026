@@ -1,6 +1,6 @@
 // Câmara 2026 — app de estudo (plano, questões, caderno de erros, ensaios, desempenho).
 import * as fb from './fb.js';
-import { EDITAL, STATUS } from './edital.js';
+import { EDITAL, CRONOGRAMA, CONTEUDOS, STATUS } from './edital.js';
 import { PROVA, CORTES, SEMANAS, roteiro, semanaDe, ROTULO_DIA, resumoDia, MATERIAIS } from './plano.js';
 
 // ---------- utilidades ----------
@@ -187,10 +187,10 @@ function notaEnsaio(e) {
 // ---------- navegação ----------
 const VIEWS = {
   hoje: { t: 'Hoje', ic: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>' },
+  plano: { t: 'Plano', ic: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M8 15l2 2 4-4"/>' },
   questoes: { t: 'Questões', ic: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>' },
   erros: { t: 'Erros', ic: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5z"/>' },
   desempenho: { t: 'Desempenho', ic: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>' },
-  materiais: { t: 'Materiais', ic: '<path d="M3 7h6l2 2h10v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>' },
 };
 const icone = (p) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
 
@@ -200,7 +200,7 @@ function nav() {
 }
 
 function ir(view) {
-  if (!VIEWS[view] && !['ajustes', 'sessao', 'ensaio', 'discursiva', 'peca', 'edital'].includes(view)) view = 'hoje';
+  if (!VIEWS[view] && !['ajustes', 'sessao', 'ensaio', 'discursiva', 'peca', 'edital', 'materiais'].includes(view)) view = 'hoje';
   S.view = view; if (VIEWS[view] || view === 'ajustes') local.set('view', view);
   render();
   window.scrollTo(0, 0);
@@ -211,7 +211,7 @@ function render() {
   const m = $('#main');
   if (!S.user) { m.innerHTML = telaLogin(); return; }
   if (!S.pronto) { m.innerHTML = '<p class="carregando">Carregando seus dados…</p>'; return; }
-  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, discursiva: vDiscursiva, edital: vEdital, peca: vPeca, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
+  const v = { hoje: vHoje, plano: vPlano, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, discursiva: vDiscursiva, edital: () => { S.planoAba = 'edital'; return vPlano(); }, peca: vPeca, materiais: () => { S.planoAba = 'mat'; return vPlano(); }, ajustes: vAjustes }[S.view] || vHoje;
   m.innerHTML = v();
   if (S.view === 'ensaio') posEnsaio();
   if (S.view === 'peca') posPeca();
@@ -266,6 +266,7 @@ function vHoje() {
     ${trilha(hoje)}${diasSemana(hoje)}
     <div class="cols ${S.foco ? 'foco' : ''}"><section class="col">
       <h2>Roteiro · 4 h</h2>${tarefas}
+      ${(() => { const w = s && CRONOGRAMA.find((x) => x.id === 's' + s.n); return w ? `<h2>Checklist da semana ${s.n}</h2><p class="mut">Marcar aqui cobre o edital automaticamente.</p>${w.it.map((it) => linhaChk(it)).join('')}` : ''; })()}
       <label class="nota"><span>Anotação do dia</span><textarea data-act="anot" rows="3" placeholder="O que foi feito, o que ficou para trás">${esc(reg.a || '')}</textarea></label>
       <label class="tarefa ${reg.ok ? 'feita' : ''}"><input type="checkbox" data-act="diaok" ${reg.ok ? 'checked' : ''}><span><b>Dia cumprido</b></span></label>
       <div class="cards3">
@@ -432,7 +433,7 @@ function vDesempenho() {
   <section><h2>Ensaios</h2><p class="mut">Cortes: ${CORTES.p1} em P1, ${CORTES.p2} em P2, ${CORTES.total} no total. Em vermelho, abaixo do corte.</p>
   <table class="tab"><thead><tr><th>Data</th><th>Ensaio</th><th class="n">P1</th><th class="n">P2</th><th class="n">Total</th><th></th></tr></thead><tbody>${linhasEns || '<tr><td colspan="6" class="mut">Nenhum ensaio.</td></tr>'}</tbody></table>
   <button class="btn" data-act="novoEnsaio">Novo ensaio</button>${projecao(ens)}</section>
-  <section><h2>Cobertura do edital</h2>${resumoEdital()}<p><button class="btn sec" data-view="edital">Abrir o edital</button></p></section>
+  <section><h2>Cobertura do edital</h2>${resumoEdital()}<p><button class="btn sec" data-act="abrirEdital">Abrir o edital</button></p></section>
   <section><h2>Discursiva</h2>${resumoDiscursiva()}<p><button class="btn sec" data-view="discursiva">Abrir discursiva</button></p></section>
   <section><h2>Questões</h2>${graficoLiquido(liquidoSessoes().slice(-20))}</section>
   <section><h2>Acerto por fonte</h2><p class="mut">Percentual líquido de acerto (vistas − erros) / vistas, e número de respostas.</p>${fontesAc || '<p class="mut">Sem dados.</p>'}</section>
@@ -510,28 +511,75 @@ function projecao(ens) {
 }
 
 
-// ----- Cobertura do edital -----
-const cobKey = (d, c) => d + '|' + c;
-function contaEdital(disc) {
-  const cob = S.plano.cob || {}; const c = { '': 0, e: 0, q: 0, d: 0 };
-  disc.itens.forEach(([cod]) => { c[cob[cobKey(disc.d, cod)] || '']++; });
-  return c;
+// ----- Plano: cronograma, conteúdos e edital verticalizado -----
+const RANK = { '': 0, e: 1, q: 2, d: 3 };
+const PELO_RANK = ['', 'e', 'q', 'd'];
+function cobertura() {
+  const chk = S.plano.chk || {}, cob = S.plano.cob || {}, m = {};
+  const add = (it, origem) => { for (const r of it.ed) { const x = m[r] = m[r] || { por: [], feitos: 0 }; x.por.push({ ...it, origem }); if (chk[it.k]) x.feitos++; } };
+  CRONOGRAMA.forEach((w) => w.it.forEach((it) => add(it, w.n))); CONTEUDOS.forEach((c) => c.it.forEach((it) => add(it, c.t)));
+  const out = {};
+  for (const d of EDITAL) {
+    for (const [c] of d.itens) { const k = d.id + '|' + c, x = m[k] || { por: [], feitos: 0 }; const auto = x.feitos ? 'e' : '', man = cob[k] || ''; out[k] = { st: RANK[man] >= RANK[auto] ? man : auto, auto, man, por: x.por, feitos: x.feitos }; }
+    for (const [c] of d.itens.slice().reverse()) {
+      const filhos = d.itens.filter(([o]) => o.startsWith(c + '.')); if (!filhos.length) continue;
+      const k = d.id + '|' + c, minF = Math.min(...filhos.map(([o]) => RANK[out[d.id + '|' + o].st]));
+      out[k].pai = true; if (minF > RANK[out[k].st]) out[k].st = PELO_RANK[minF];
+    }
+  }
+  return out;
+}
+function contaDisc(d, cob) {
+  const c = { '': 0, e: 0, q: 0, d: 0 }; let n = 0, semPlano = 0;
+  for (const [cod] of d.itens) { const x = cob[d.id + '|' + cod]; if (x.pai) continue; n++; c[x.st]++; if (!x.por.length) semPlano++; }
+  return { ...c, n, feito: n - c[''], semPlano };
 }
 function resumoEdital() {
-  return EDITAL.map((disc) => { const c = contaEdital(disc), n = disc.itens.length, feito = n - c['']; return `<div class="barra"><span>${esc(disc.d)} <small>${disc.p}</small></span><div class="bt"><div style="width:${(feito / n) * 100}%"></div></div><span class="n">${feito}/${n}</span><span class="mut n">${c.d}✓</span></div>`; }).join('') + '<p class="mut">Itens com algum estudo / total. ✓ = marcados como dominados.</p>';
+  const cob = cobertura();
+  return EDITAL.map((d) => { const c = contaDisc(d, cob); return `<div class="barra"><span>${esc(d.d.replace('Noções de ', ''))} <small>${d.p}</small></span><div class="bt"><div style="width:${(c.feito / c.n) * 100}%"></div></div><span class="n">${c.feito}/${c.n}</span><span class="mut n">${c.d}✓</span></div>`; }).join('') + '<p class="mut">Itens do edital já estudados / total (sem contar os itens-título). ✓ = dominados.</p>';
 }
-function vEdital() {
-  const cob = S.plano.cob || {};
-  return `<h1>Cobertura do edital</h1><p class="mut">Toque no status para avançar: não visto → estudado → com questões → dominado. Itens com * têm redação resumida: confira no PDF do edital.</p>
-  ${EDITAL.map((disc) => { const c = contaEdital(disc); return `<section><h2>${esc(disc.d)} <small>${disc.p}</small></h2><p class="mut">${c['']} não vistos · ${c.e} estudados · ${c.q} com questões · ${c.d} dominados</p>
-    <table class="tab"><tbody>${disc.itens.map(([cod, t]) => { const k = cob[cobKey(disc.d, cod)] || ''; const st = STATUS.find((x) => x.k === k); return `<tr><td class="n" style="width:70px">${esc(cod)}</td><td>${esc(t)}</td><td style="width:150px"><button class="pill st-${k || 'n'}" data-act="cob" data-k="${esc(cobKey(disc.d, cod))}">${st.t}</button></td></tr>`; }).join('')}</tbody></table></section>`; }).join('')}`;
+const chipsEd = (ed) => ed.length ? `<span class="chips">${ed.map((r) => { const [d, c] = r.split('|'); return `<span class="chip">${esc(({ pt: 'LP', ing: 'Ing', adm: 'DA', const: 'CF/RI', ti: 'TI', ling: 'Ling', transc: 'Transc', proc: 'PL', cpol: 'CP' })[d])} ${esc(c)}</span>`; }).join('')}</span>` : '';
+function linhaChk(it, extra = '') {
+  const on = !!(S.plano.chk || {})[it.k];
+  return `<label class="tarefa ${on ? 'feita' : ''}"><input type="checkbox" data-act="chk" data-k="${it.k}" ${on ? 'checked' : ''}><span>${esc(it.t)}${it.q ? ` <small>· ${esc(it.q)}</small>` : ''}${extra}<br>${chipsEd(it.ed)}</span></label>`;
+}
+function vPlano() {
+  const aba = S.planoAba || 'cron';
+  const abas = [['cron', 'Cronograma'], ['cont', 'Conteúdos'], ['edital', 'Edital'], ['mat', 'Materiais']].map(([k, t]) => `<button class="pill ${aba === k ? 'on' : ''}" data-act="planoAba" data-a="${k}">${t}</button>`).join('');
+  let corpo = '';
+  const hoje = hojeISO(), atual = semanaDe(hoje);
+  if (aba === 'cron') {
+    corpo = `<p class="mut">Marque o que estudou. Cada item marcado cobre automaticamente os itens do edital indicados nas etiquetas.</p>` + CRONOGRAMA.map((w) => {
+      const feitos = w.it.filter((it) => (S.plano.chk || {})[it.k]).length;
+      const aberta = (S.semAberta || (atual ? 's' + atual.n : 's1')) === w.id;
+      return `<section class="sem"><button class="semhead ${aberta ? 'on' : ''}" data-act="semAbre" data-s="${w.id}"><b>${w.n} · ${esc(w.tit)}</b><span class="mut">${esc(w.per)} · ${feitos}/${w.it.length}</span></button>${aberta ? w.it.map((it) => linhaChk(it)).join('') : ''}</section>`;
+    }).join('');
+  } else if (aba === 'cont') {
+    corpo = `<p class="mut">Os mesmos itens de estudo, agrupados por matéria. Marcar aqui ou no cronograma dá no mesmo para o edital.</p>` + CONTEUDOS.map((c) => {
+      const feitos = c.it.filter((it) => (S.plano.chk || {})[it.k]).length;
+      return `<section><h2>${esc(c.t)} <small>${esc(c.p)} · ${feitos}/${c.it.length}</small></h2>${c.it.map((it) => linhaChk(it)).join('')}</section>`;
+    }).join('');
+  } else if (aba === 'edital') {
+    const cob = cobertura();
+    corpo = `<p class="mut">Edital nº 1/2026, cargo 11, texto integral. O status sobe sozinho quando você marca um item do plano ligado a ele; toque no status para subir à mão (com questões, dominado). Itens-título acompanham os subitens. <b class="alerta">Sem item no plano</b> = lacuna do cronograma.</p>` + EDITAL.map((d) => {
+      const c = contaDisc(d, cob);
+      return `<section><h2>${esc(d.d)} <small>${d.p} · ${c.feito}/${c.n}</small></h2><table class="tab ed"><tbody>${d.itens.map(([cod, t]) => {
+        const k = d.id + '|' + cod, x = cob[k], st = STATUS.find((y) => y.k === x.st);
+        const fonte = x.pai ? '<small class="mut">pelos subitens</small>' : x.por.length ? `<small class="mut">${x.feitos}/${x.por.length} itens do plano</small>` : '<small class="alerta">sem item no plano</small>';
+        return `<tr class="${x.pai ? 'pai' : ''}"><td class="n cod">${esc(cod)}</td><td>${esc(t)}<br>${fonte}</td><td class="stc">${x.pai ? `<span class="pill st-${x.st || 'n'}">${st.t}</span>` : `<button class="pill st-${x.st || 'n'}" data-act="cob" data-k="${esc(k)}">${st.t}</button>`}</td></tr>`;
+      }).join('')}</tbody></table></section>`;
+    }).join('');
+  } else {
+    corpo = MATERIAIS.map((g) => `<section><h2>${esc(g.g)}</h2><ul class="links">${g.itens.map((i) => `<li><a href="${esc(i.u)}" target="_blank" rel="noopener">${esc(i.t)}</a></li>`).join('')}</ul></section>`).join('');
+  }
+  return `<h1>Plano</h1><div class="graus">${abas}</div>${corpo}`;
 }
 
 // ----- Discursiva -----
 const ERROS_LINGUA = { conc: 'Concordância', reg: 'Regência', crase: 'Crase', pont: 'Pontuação', graf: 'Grafia/acentuação', col: 'Colocação pronominal', prop: 'Propriedade vocabular', out: 'Outro' };
 const MODELOS_PECA = {
-  peca: { nome: 'Peça técnica (até 50 linhas)', lim: 50, comandos: [['Estrutura e apresentação', 4], ['Relatório / introdução', 3], ['Comando 1', 9], ['Comando 2', 9], ['Conclusão fundamentada', 5]] },
-  quest: { nome: '2 questões (até 20 linhas cada)', lim: 40, comandos: [['Questão 1 — aspecto 1', 5], ['Questão 1 — aspecto 2', 5], ['Questão 1 — aspecto 3', 5], ['Questão 2 — aspecto 1', 5], ['Questão 2 — aspecto 2', 5], ['Questão 2 — aspecto 3', 5]] },
+  peca: { nome: 'Peça técnica (até 50 linhas, 30 pontos)', lim: 50, mult: 6, comandos: [['Estrutura e apresentação', 4], ['Relatório / introdução', 3], ['Comando 1', 9], ['Comando 2', 9], ['Conclusão fundamentada', 5]] },
+  questao: { nome: 'Questão discursiva (até 20 linhas, 15 pontos)', lim: 20, mult: 3, comandos: [['Aspecto 1', 5], ['Aspecto 2', 5], ['Aspecto 3', 5]] },
 };
 function notaPeca(p) {
   const nc = (p.comandos || []).reduce((t, c) => t + (+c.obt || 0), 0), max = (p.comandos || []).reduce((t, c) => t + (+c.max || 0), 0);
@@ -545,7 +593,7 @@ function resumoDiscursiva() {
   const tot = {}; ps.forEach((p) => Object.entries(p.erros || {}).forEach(([k, v]) => { tot[k] = (tot[k] || 0) + (+v || 0); }));
   const top = Object.entries(tot).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${ERROS_LINGUA[k]} (${v})`).join(', ');
   return `<table class="tab"><thead><tr><th>Data</th><th>Tema</th><th class="n">NC</th><th class="n">Erros</th><th class="n">Nota</th></tr></thead><tbody>${ps.map((p) => { const n = notaPeca(p); return `<tr><td>${dm(p.data)}</td><td><a href="#" data-act="abrirPeca" data-id="${p.id}">${esc(p.tema || '(sem tema)')}</a></td><td class="n">${n.nc}/${n.max}</td><td class="n">${n.ne}</td><td class="n ${n.max && n.nota < n.max / 2 ? 'alerta' : ''}">${n.nota}</td></tr>`; }).join('')}</tbody></table>
-  ${top ? `<p>Erros de língua mais frequentes: <b>${top}</b>.</p>` : ''}<p class="mut">Mínimo na prova: 30 dos 60 pontos da discursiva. Nota da peça: NPT = NC − 6 × NE ÷ TL (edital, item 9.8.5.2). Cada erro em 50 linhas custa 0,12; um comando esquecido custa muito mais.</p>`;
+  ${top ? `<p>Erros de língua mais frequentes: <b>${top}</b>.</p>` : ''}<p class="mut">Mínimo na prova: 30 dos 60 pontos da discursiva. Peça: NPT = NC − 6 × NE ÷ TL (item 9.8.5.2). Cada questão: NQ = NC − 3 × NE ÷ TL (item 9.8.5.1). NFPD = NQ1 + NQ2 + NPT. Cada erro em 50 linhas custa 0,12; um comando esquecido custa muito mais.</p>`;
 }
 function vDiscursiva() {
   return `<h1>Discursiva</h1>${resumoDiscursiva()}<p><button class="btn" data-act="novaPeca">Nova peça</button></p>
@@ -553,7 +601,7 @@ function vDiscursiva() {
 }
 function novaPeca(tipo = 'peca') {
   const m = MODELOS_PECA[tipo];
-  S.peca = { id: 'p' + Date.now(), data: hojeISO(), tipo, tema: '', fonte: '', comandos: m.comandos.map(([t, max]) => ({ t, max, obt: '' })), tl: '', mult: 6, erros: {}, tempo: 0, rodando: false, obs: '' };
+  S.peca = { id: 'p' + Date.now(), data: hojeISO(), tipo, tema: '', fonte: '', comandos: m.comandos.map(([t, max]) => ({ t, max, obt: '' })), tl: '', mult: m.mult, erros: {}, tempo: 0, rodando: false, obs: '' };
   ir('peca');
 }
 function salvarPeca() {
@@ -565,7 +613,7 @@ function salvarPeca() {
 }
 function vPeca() {
   const p = S.peca; if (!p) return vDiscursiva();
-  const n = notaPeca(p), m = MODELOS_PECA[p.tipo];
+  const n = notaPeca(p), m = MODELOS_PECA[p.tipo] || MODELOS_PECA.peca;
   const lim = p.tipo === 'peca' ? 5400 : 3600;
   return `<div class="ensaio-top"><div><h1>Peça · ${dm(p.data)}</h1><p class="mut">${m.nome} · 1h30 na prova</p></div>
     <div class="relogio"><span id="rel">${fmtTempo(p.tempo)}</span><button class="btn sm" data-act="pecaRelogio">${p.rodando ? 'Pausar' : 'Iniciar'}</button></div></div>
@@ -605,7 +653,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 5 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -667,7 +715,10 @@ document.addEventListener('click', async (ev) => {
     }
     case 'novoEnsaio': novoEnsaio(); break;
     case 'novaPeca': novaPeca(); break;
-    case 'cob': { S.plano.cob = S.plano.cob || {}; const at = S.plano.cob[a.dataset.k] || ''; const i = STATUS.findIndex((x) => x.k === at); const nx = STATUS[(i + 1) % STATUS.length].k; if (nx) S.plano.cob[a.dataset.k] = nx; else delete S.plano.cob[a.dataset.k]; salvar('plano'); render(); break; }
+    case 'cob': { S.plano.cob = S.plano.cob || {}; const x = cobertura()[a.dataset.k]; let nx = PELO_RANK[(RANK[x.st] + 1) % 4]; if (RANK[nx] <= RANK[x.auto]) nx = ''; if (nx) S.plano.cob[a.dataset.k] = nx; else delete S.plano.cob[a.dataset.k]; salvar('plano'); render(); break; }
+    case 'planoAba': S.planoAba = a.dataset.a; render(); break;
+    case 'semAbre': S.semAberta = S.semAberta === a.dataset.s ? 'nenhuma' : a.dataset.s; render(); break;
+    case 'abrirEdital': S.planoAba = 'edital'; ir('plano'); break;
     case 'abrirPeca': { const x = S.pecas.find((y) => y.id === a.dataset.id); if (x) { S.peca = { ...x, rodando: false }; ir('peca'); } break; }
     case 'pecaRelogio': S.peca.rodando = !S.peca.rodando; salvarPeca(); render(); break;
     case 'pecaQuesito': S.peca.comandos.push({ t: '', max: '', obt: '' }); salvarPeca(); render(); break;
@@ -708,7 +759,7 @@ document.addEventListener('change', async (ev) => {
   const form = t.closest('[data-form="filtros"]');
   const fp = t.closest('[data-form="peca"]');
   if (fp && S.peca) {
-    if (t.name === 'tipo' && t.value !== S.peca.tipo) { const m = MODELOS_PECA[t.value]; S.peca.tipo = t.value; if (!S.peca.comandos.some((c) => c.obt !== '' && c.obt != null)) S.peca.comandos = m.comandos.map(([q, max]) => ({ t: q, max, obt: '' })); }
+    if (t.name === 'tipo' && t.value !== S.peca.tipo) { const m = MODELOS_PECA[t.value]; S.peca.tipo = t.value; S.peca.mult = m.mult; if (!S.peca.comandos.some((c) => c.obt !== '' && c.obt != null)) S.peca.comandos = m.comandos.map(([q, max]) => ({ t: q, max, obt: '' })); }
     else S.peca[t.name] = t.value;
     salvarPeca(); render(); return;
   }
@@ -719,6 +770,8 @@ document.addEventListener('change', async (ev) => {
     const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; const m = new Set(r.m || []);
     if (t.checked) m.add(t.dataset.k); else m.delete(t.dataset.k);
     r.m = [...m]; salvar('plano'); render();
+  } else if (act === 'chk') {
+    S.plano.chk = S.plano.chk || {}; if (t.checked) S.plano.chk[t.dataset.k] = true; else delete S.plano.chk[t.dataset.k]; salvar('plano'); render();
   } else if (act === 'diaok') {
     const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; r.ok = t.checked; salvar('plano'); render();
   } else if (act === 'motivo') {
