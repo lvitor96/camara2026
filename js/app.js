@@ -32,7 +32,7 @@ const S = {
   da: { hist: [], it: {}, cal: {} },
   plano: { chk: {}, dias: {}, sim: {} },
   cad: { A: {}, dom: {}, mot: {}, rev: {} },
-  ensaios: [],
+  ensaios: [], pecas: [], peca: null,
   view: local.get('view', 'hoje'),
   foco: local.get('foco', false),
   q: null, ens: null, filtros: local.get('filtros', { banco: 'leg', n: '', o: '', modo: 'novos', qtd: 20 }),
@@ -199,7 +199,7 @@ function nav() {
 }
 
 function ir(view) {
-  if (!VIEWS[view] && view !== 'ajustes' && view !== 'sessao' && view !== 'ensaio') view = 'hoje';
+  if (!VIEWS[view] && !['ajustes', 'sessao', 'ensaio', 'discursiva', 'peca'].includes(view)) view = 'hoje';
   S.view = view; if (VIEWS[view] || view === 'ajustes') local.set('view', view);
   render();
   window.scrollTo(0, 0);
@@ -210,9 +210,10 @@ function render() {
   const m = $('#main');
   if (!S.user) { m.innerHTML = telaLogin(); return; }
   if (!S.pronto) { m.innerHTML = '<p class="carregando">Carregando seus dados…</p>'; return; }
-  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
+  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, discursiva: vDiscursiva, peca: vPeca, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
   m.innerHTML = v();
   if (S.view === 'ensaio') posEnsaio();
+  if (S.view === 'peca') posPeca();
 }
 
 // ---------- telas ----------
@@ -250,6 +251,7 @@ function vHoje() {
       ${t.k === 'q' || t.k === 'port' ? `<a class="btn sm" href="#questoes" data-view="questoes">Questões</a>` : ''}
       ${t.k === 'ens' ? `<a class="btn sm" href="#" data-act="novoEnsaio">Ensaio</a>` : ''}
       ${t.k === 'corr' ? `<a class="btn sm" href="#erros" data-view="erros">Caderno</a>` : ''}
+      ${t.k === 'disc' ? `<a class="btn sm" href="#" data-act="novaPeca">Peça</a>` : ''}
     </label>`).join('');
   const ult = S.leg.hist[S.leg.hist.length - 1];
   const ultE = S.ensaios.filter((e) => notaEnsaio(e)).sort((a, b) => (a.data < b.data ? 1 : -1))[0];
@@ -428,7 +430,8 @@ function vDesempenho() {
   <div class="card"><p class="mut">Itens resolvidos</p><p class="num">${resolvidos}</p></div></div>
   <section><h2>Ensaios</h2><p class="mut">Cortes: ${CORTES.p1} em P1, ${CORTES.p2} em P2, ${CORTES.total} no total. Em vermelho, abaixo do corte.</p>
   <table class="tab"><thead><tr><th>Data</th><th>Ensaio</th><th class="n">P1</th><th class="n">P2</th><th class="n">Total</th><th></th></tr></thead><tbody>${linhasEns || '<tr><td colspan="6" class="mut">Nenhum ensaio.</td></tr>'}</tbody></table>
-  <button class="btn" data-act="novoEnsaio">Novo ensaio</button></section>
+  <button class="btn" data-act="novoEnsaio">Novo ensaio</button>${projecao(ens)}</section>
+  <section><h2>Discursiva</h2>${resumoDiscursiva()}<p><button class="btn sec" data-view="discursiva">Abrir discursiva</button></p></section>
   <section><h2>Questões</h2>${graficoLiquido(liquidoSessoes().slice(-20))}</section>
   <section><h2>Acerto por fonte</h2><p class="mut">Percentual líquido de acerto (vistas − erros) / vistas, e número de respostas.</p>${fontesAc || '<p class="mut">Sem dados.</p>'}</section>
   <section><h2>Calibração</h2>${tabelaCalibracao(calibracaoTotal())}<p class="mut">Inclui questões e ensaios. Acerto acima de 50% num grau quer dizer que marcar naquele grau soma pontos; abaixo, tira.</p></section>`;
@@ -493,6 +496,83 @@ function posEnsaio() {
   }, 1000);
 }
 
+
+// ----- Projeção -----
+function projecao(ens) {
+  const pts = ens.map((e) => ({ e, n: notaEnsaio(e) })).filter((x) => x.n);
+  if (pts.length < 3) return `<p class="mut">Projeção: precisa de pelo menos 3 ensaios corrigidos (hoje: ${pts.length}). Até lá, o número que importa é a P1 contra o corte de ${CORTES.p1}.</p>`;
+  const x = pts.map((p) => difDias(pts[0].e.data, p.e.data)), alvo = difDias(pts[0].e.data, PROVA);
+  const reg = (ys) => { const n = ys.length, mx = x.reduce((a, b) => a + b) / n, my = ys.reduce((a, b) => a + b) / n; let num = 0, den = 0; x.forEach((xi, i) => { num += (xi - mx) * (ys[i] - my); den += (xi - mx) ** 2; }); const b = den ? num / den : 0; return Math.round(my + b * (alvo - mx)); };
+  const p1 = reg(pts.map((p) => p.n.p1)), p2 = reg(pts.map((p) => p.n.p2));
+  return `<p>Tendência dos ${pts.length} ensaios, projetada para 17/01: <b class="${p1 < CORTES.p1 ? 'alerta' : ''}">P1 ≈ ${p1}</b> · P2 ≈ ${p2}. É só a reta dos pontos que existem: ensaios com itens já vistos inflam a tendência.</p>`;
+}
+
+// ----- Discursiva -----
+const ERROS_LINGUA = { conc: 'Concordância', reg: 'Regência', crase: 'Crase', pont: 'Pontuação', graf: 'Grafia/acentuação', col: 'Colocação pronominal', prop: 'Propriedade vocabular', out: 'Outro' };
+const MODELOS_PECA = {
+  peca: { nome: 'Peça técnica (até 50 linhas)', lim: 50, comandos: [['Estrutura e apresentação', 4], ['Relatório / introdução', 3], ['Comando 1', 9], ['Comando 2', 9], ['Conclusão fundamentada', 5]] },
+  quest: { nome: '2 questões (até 20 linhas cada)', lim: 40, comandos: [['Questão 1 — aspecto 1', 5], ['Questão 1 — aspecto 2', 5], ['Questão 1 — aspecto 3', 5], ['Questão 2 — aspecto 1', 5], ['Questão 2 — aspecto 2', 5], ['Questão 2 — aspecto 3', 5]] },
+};
+function notaPeca(p) {
+  const nc = (p.comandos || []).reduce((t, c) => t + (+c.obt || 0), 0), max = (p.comandos || []).reduce((t, c) => t + (+c.max || 0), 0);
+  const tl = +p.tl || 0, ne = Object.values(p.erros || {}).reduce((a, b) => a + (+b || 0), 0);
+  const nota = tl ? Math.max(0, nc - ((+p.mult || 6) * ne) / tl) : nc;
+  return { nc, max, ne, tl, nota: Math.round(nota * 100) / 100 };
+}
+function resumoDiscursiva() {
+  const ps = S.pecas.slice().sort((a, b) => (a.data < b.data ? -1 : 1));
+  if (!ps.length) return '<p class="mut">Nenhuma peça registrada. São 7 até a prova; a primeira é no domingo 29/11.</p>';
+  const tot = {}; ps.forEach((p) => Object.entries(p.erros || {}).forEach(([k, v]) => { tot[k] = (tot[k] || 0) + (+v || 0); }));
+  const top = Object.entries(tot).filter(([, v]) => v).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${ERROS_LINGUA[k]} (${v})`).join(', ');
+  return `<table class="tab"><thead><tr><th>Data</th><th>Tema</th><th class="n">NC</th><th class="n">Erros</th><th class="n">Nota</th></tr></thead><tbody>${ps.map((p) => { const n = notaPeca(p); return `<tr><td>${dm(p.data)}</td><td><a href="#" data-act="abrirPeca" data-id="${p.id}">${esc(p.tema || '(sem tema)')}</a></td><td class="n">${n.nc}/${n.max}</td><td class="n">${n.ne}</td><td class="n ${n.max && n.nota < n.max / 2 ? 'alerta' : ''}">${n.nota}</td></tr>`; }).join('')}</tbody></table>
+  ${top ? `<p>Erros de língua mais frequentes: <b>${top}</b>.</p>` : ''}<p class="mut">Mínimo na prova: 30 dos 60 pontos da discursiva. Nota da peça: NPT = NC − 6 × NE ÷ TL (edital, item 9.8.5.2). Cada erro em 50 linhas custa 0,12; um comando esquecido custa muito mais.</p>`;
+}
+function vDiscursiva() {
+  return `<h1>Discursiva</h1>${resumoDiscursiva()}<p><button class="btn" data-act="novaPeca">Nova peça</button></p>
+  <p><a href="https://claude.ai/artifact/2DtjeHWPxj5hJUwnvDRupz" target="_blank" rel="noopener">Guia de treino da peça técnica</a> · <a href="https://drive.google.com/drive/folders/1EeB6nK9o6fc4_Ktt7cCoNAyOWFrtc2aT" target="_blank" rel="noopener">Provas anteriores e padrões de resposta</a></p>`;
+}
+function novaPeca(tipo = 'peca') {
+  const m = MODELOS_PECA[tipo];
+  S.peca = { id: 'p' + Date.now(), data: hojeISO(), tipo, tema: '', fonte: '', comandos: m.comandos.map(([t, max]) => ({ t, max, obt: '' })), tl: '', mult: 6, erros: {}, tempo: 0, rodando: false, obs: '' };
+  ir('peca');
+}
+function salvarPeca() {
+  const p = S.peca; if (!p) return;
+  const { rodando, ...d } = p;
+  const i = S.pecas.findIndex((x) => x.id === p.id); if (i >= 0) S.pecas[i] = d; else S.pecas.push(d);
+  clearTimeout(timers.peca);
+  timers.peca = setTimeout(() => fb.gravar('pecas/' + p.id, { ...d, v: Date.now() }).catch((e) => aviso('Falha ao salvar a peça: ' + e.message)), 500);
+}
+function vPeca() {
+  const p = S.peca; if (!p) return vDiscursiva();
+  const n = notaPeca(p), m = MODELOS_PECA[p.tipo];
+  const lim = p.tipo === 'peca' ? 5400 : 3600;
+  return `<div class="ensaio-top"><div><h1>Peça · ${dm(p.data)}</h1><p class="mut">${m.nome} · 1h30 na prova</p></div>
+    <div class="relogio"><span id="rel">${fmtTempo(p.tempo)}</span><button class="btn sm" data-act="pecaRelogio">${p.rodando ? 'Pausar' : 'Iniciar'}</button></div></div>
+    ${p.tempo > lim ? '<p class="alerta">Passou de 1h30: na prova, o tempo da peça acabou.</p>' : ''}
+    <form class="filtros" data-form="peca">
+      <label>Tipo<select name="tipo">${Object.entries(MODELOS_PECA).map(([k, v]) => `<option value="${k}" ${p.tipo === k ? 'selected' : ''}>${v.nome}</option>`).join('')}</select></label>
+      <label>Data<input name="data" type="date" value="${esc(p.data)}"></label>
+      <label class="larga">Tema<input name="tema" value="${esc(p.tema)}" placeholder="Ex.: TCDF 2026 — informação sobre agentes públicos"></label>
+      <label class="larga">Fonte do enunciado e do padrão<input name="fonte" value="${esc(p.fonte)}" placeholder="Prova, página, link do padrão de resposta"></label>
+    </form>
+    <h2>Correção · conteúdo (NC)</h2><p class="mut">Corrija na segunda, com a peça fria. Um quesito por comando do enunciado; pontos pelo padrão de resposta, quando houver.</p>
+    <table class="tab"><thead><tr><th>Quesito</th><th class="n">Vale</th><th class="n">Obtido</th></tr></thead><tbody>${p.comandos.map((c, i) => `<tr><td><input data-pc="t" data-i="${i}" value="${esc(c.t)}" placeholder="Quesito"></td><td class="n"><input data-pc="max" data-i="${i}" type="number" step="0.5" value="${esc(c.max)}" style="width:80px"></td><td class="n"><input data-pc="obt" data-i="${i}" type="number" step="0.25" value="${esc(c.obt)}" style="width:80px"></td></tr>`).join('')}</tbody></table>
+    <button class="btn sm sec" data-act="pecaQuesito">+ quesito</button>
+    <h2>Língua (NE) e linhas (TL)</h2>
+    <div class="filtros">${Object.entries(ERROS_LINGUA).map(([k, t]) => `<label>${t}<input data-pe="${k}" type="number" min="0" value="${esc((p.erros || {})[k] || '')}"></label>`).join('')}
+      <label>Linhas escritas (TL)<input data-pf="tl" type="number" min="0" max="${m.lim}" value="${esc(p.tl)}"></label>
+      <label>Multiplicador do edital<input data-pf="mult" type="number" step="1" value="${esc(p.mult)}"></label></div>
+    <div class="cards3"><div class="card"><p class="mut">NC</p><p class="num">${n.nc} / ${n.max}</p></div><div class="card"><p class="mut">Erros · linhas</p><p class="num">${n.ne} · ${n.tl || '—'}</p></div><div class="card"><p class="mut">Nota (NC − ${p.mult} × NE ÷ TL)</p><p class="num cor" id="notaPeca">${n.nota}</p></div></div>
+    <label class="nota"><span>O que faltou (para a próxima peça)</span><textarea data-pf="obs" rows="3">${esc(p.obs)}</textarea></label>
+    <p><button class="btn" data-act="pecaSair">Salvar e sair</button></p>`;
+}
+function posPeca() {
+  clearInterval(timers.relp);
+  const p = S.peca; if (!p || !p.rodando) return;
+  timers.relp = setInterval(() => { p.tempo++; const el = $('#rel'); if (el) el.textContent = fmtTempo(p.tempo); if (p.tempo % 30 === 0) salvarPeca(); }, 1000);
+}
+
 // ----- Materiais e ajustes -----
 function vMateriais() {
   return `<h1>Materiais</h1>${MATERIAIS.map((g) => `<section><h2>${esc(g.g)}</h2><ul class="links">${g.itens.map((i) => `<li><a href="${esc(i.u)}" target="_blank" rel="noopener">${esc(i.t)}</a></li>`).join('')}</ul></section>`).join('')}`;
@@ -505,7 +585,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 3 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 4 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -566,6 +646,11 @@ document.addEventListener('click', async (ev) => {
       break;
     }
     case 'novoEnsaio': novoEnsaio(); break;
+    case 'novaPeca': novaPeca(); break;
+    case 'abrirPeca': { const x = S.pecas.find((y) => y.id === a.dataset.id); if (x) { S.peca = { ...x, rodando: false }; ir('peca'); } break; }
+    case 'pecaRelogio': S.peca.rodando = !S.peca.rodando; salvarPeca(); render(); break;
+    case 'pecaQuesito': S.peca.comandos.push({ t: '', max: '', obt: '' }); salvarPeca(); render(); break;
+    case 'pecaSair': S.peca.rodando = false; salvarPeca(); clearInterval(timers.relp); S.peca = null; ir('discursiva'); break;
     case 'abrirEnsaio': { const x = S.ensaios.find((y) => y.id === a.dataset.id); if (x) { S.ens = { ...x, rodando: false, etapa: 'folha' }; ir('ensaio'); } break; }
     case 'ensComecar': {
       const f = $('[data-form="ensaio"]'); const fd = new FormData(f);
@@ -584,7 +669,7 @@ document.addEventListener('click', async (ev) => {
     }
     case 'ensSair': e.rodando = false; salvarEnsaio(); clearInterval(timers.rel); S.ens = null; ir('desempenho'); break;
     case 'exportar': {
-      const blob = new Blob([JSON.stringify({ leg: S.leg, ti: S.ti, da: S.da, plano: S.plano, cad: S.cad, ensaios: S.ensaios, em: new Date().toISOString() })], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify({ leg: S.leg, ti: S.ti, da: S.da, plano: S.plano, cad: S.cad, ensaios: S.ensaios, pecas: S.pecas, em: new Date().toISOString() })], { type: 'application/json' });
       const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = 'camara2026-copia-' + hojeISO() + '.json'; l.click(); URL.revokeObjectURL(u); break;
     }
     default: break;
@@ -600,6 +685,12 @@ function atualizaFolha(i) {
 document.addEventListener('change', async (ev) => {
   const t = ev.target;
   const form = t.closest('[data-form="filtros"]');
+  const fp = t.closest('[data-form="peca"]');
+  if (fp && S.peca) {
+    if (t.name === 'tipo' && t.value !== S.peca.tipo) { const m = MODELOS_PECA[t.value]; S.peca.tipo = t.value; if (!S.peca.comandos.some((c) => c.obt !== '' && c.obt != null)) S.peca.comandos = m.comandos.map(([q, max]) => ({ t: q, max, obt: '' })); }
+    else S.peca[t.name] = t.value;
+    salvarPeca(); render(); return;
+  }
   if (form) { S.filtros[t.name] = t.value; if (t.name === 'banco') S.filtros.n = ''; local.set('filtros', S.filtros); render(); return; }
   const act = t.dataset.act;
   const dia = S.diaSel || hojeISO();
@@ -627,6 +718,15 @@ document.addEventListener('change', async (ev) => {
 
 document.addEventListener('input', (ev) => {
   const t = ev.target;
+  if (S.peca && (t.dataset.pc || t.dataset.pe || t.dataset.pf)) {
+    const p = S.peca;
+    if (t.dataset.pc) p.comandos[+t.dataset.i][t.dataset.pc] = t.value;
+    else if (t.dataset.pe) { p.erros = p.erros || {}; p.erros[t.dataset.pe] = t.value; }
+    else p[t.dataset.pf] = t.value;
+    salvarPeca();
+    const n = notaPeca(p); const el = $('#notaPeca'); if (el) el.textContent = n.nota;
+    return;
+  }
   if (t.dataset.act === 'anot') {
     const dia = S.diaSel || hojeISO();
     const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; r.a = t.value; salvar('plano');
@@ -640,10 +740,10 @@ const vazio = { leg: { hist: [], it: {}, cal: {} }, ti: { hist: [], it: {}, cal:
 async function carregarTudo() {
   S.pronto = false; render();
   try {
-    const [leg, ti, da, plano, cad, ens, banco] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco()]);
+    const [leg, ti, da, plano, cad, ens, banco, pecas] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco(), fb.listar('pecas')]);
     S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) }; S.da = { ...vazio.da, ...(da || {}) };
     S.plano = { ...vazio.plano, ...(plano || {}) }; S.cad = { ...vazio.cad, ...(cad || {}) };
-    S.ensaios = ens; S.banco = banco;
+    S.ensaios = ens; S.banco = banco; S.pecas = pecas;
     S.pronto = true;
     for (const k of Object.keys(DOCS)) fb.ouvir(DOCS[k], (d, meta) => {
       if (!d || meta.hasPendingWrites || timers[k]) return;

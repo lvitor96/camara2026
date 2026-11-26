@@ -1,5 +1,5 @@
 // Service worker: guarda a casca do app para abrir offline. Dados ficam no cache do Firestore.
-const V = 'c26-v3';
+const V = 'c26-v4';
 const CASCA = ['./', './index.html', './css/app.css', './js/app.js', './js/fb.js', './js/plano.js', './js/config.js', './manifest.webmanifest', './icon.svg'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(CASCA))); self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== V).map((k) => caches.delete(k))))); self.clients.claim(); });
