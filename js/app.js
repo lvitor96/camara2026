@@ -690,7 +690,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6.4 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.5 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -729,7 +729,7 @@ document.addEventListener('click', async (ev) => {
   if (a.dataset.view) { ev.preventDefault(); if (a.dataset.view === 'hoje') S.diaSel = null; ir(a.dataset.view); return; }
   const act = a.dataset.act;
   const tagInput = a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA';
-  if (tagInput) return; // tratados em 'change'/'input'
+  if (tagInput || a.tagName === 'FORM') return; // tratados em 'change'/'input'/'submit'
   ev.preventDefault();
   const q = S.q, e = S.ens;
   switch (act) {
