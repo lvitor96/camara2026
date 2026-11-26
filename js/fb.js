@@ -6,7 +6,8 @@ import {
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, getDoc, setDoc, collection, getDocs, deleteDoc, writeBatch, onSnapshot,
+  doc, getDoc, setDoc, updateDoc, collection, getDocs, deleteDoc, writeBatch, onSnapshot,
+  FieldPath, deleteField, arrayUnion,
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import { firebaseConfig } from './config.js';
 
@@ -48,6 +49,18 @@ export async function gravar(caminho, dados) {
 
 export async function mesclar(caminho, dados) {
   await setDoc(doc(db, caminho), dados, { merge: true });
+}
+
+// Grava só os campos que mudaram (ops: [[caminho em partes, valor]] ou {del:true} / {uniao:[...]}).
+// Duas máquinas editando campos diferentes, mesmo offline, se somam em vez de uma apagar a outra.
+export async function atualizarCampos(caminho, ops) {
+  if (!ops.length) return;
+  const args = [];
+  for (const [partes, v] of ops) {
+    const val = v && v.__del ? deleteField() : v && v.__uniao ? arrayUnion(...v.__uniao) : v;
+    args.push(new FieldPath(...partes), val);
+  }
+  for (let i = 0; i < args.length; i += 800) await updateDoc(doc(db, caminho), ...args.slice(i, i + 800));
 }
 
 export function ouvir(caminho, cb) {

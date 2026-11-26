@@ -41,11 +41,33 @@ const S = {
 const DOCS = { leg: 'dados/leg', ti: 'dados/ti', da: 'dados/da', plano: 'dados/plano', cad: 'dados/caderno' };
 
 const timers = {};
+// base[k]: última versão do documento vinda do servidor (ou do cache). Salvar = mandar só a diferença.
+const base = {};
+const clone = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+const ehObj = (o) => o && typeof o === 'object' && !Array.isArray(o);
+function diferencas(a, b, cam = [], out = []) {
+  for (const k of Object.keys(b)) {
+    if (b[k] === undefined) continue;
+    const p = [...cam, k];
+    if (!(k in a)) out.push([p, b[k]]);
+    else if (ehObj(a[k]) && ehObj(b[k])) diferencas(a[k], b[k], p, out);
+    else if (JSON.stringify(a[k]) !== JSON.stringify(b[k])) {
+      // lista que só cresceu (histórico de sessões): acrescenta sem reescrever a lista inteira
+      const prefixo = Array.isArray(a[k]) && Array.isArray(b[k]) && b[k].length > a[k].length && JSON.stringify(b[k].slice(0, a[k].length)) === JSON.stringify(a[k]);
+      out.push([p, prefixo ? { __uniao: b[k].slice(a[k].length) } : b[k]]);
+    }
+  }
+  for (const k of Object.keys(a)) if (!(k in b) || b[k] === undefined) out.push([[...cam, k], { __del: true }]);
+  return out;
+}
 function salvar(chave) {
   clearTimeout(timers[chave]);
   timers[chave] = setTimeout(() => {
     S[chave].v = Date.now();
-    fb.gravar(DOCS[chave], { ...S[chave] }).catch((e) => aviso('Falha ao salvar: ' + e.message));
+    const novo = clone(S[chave]);
+    const pr = base[chave] ? fb.atualizarCampos(DOCS[chave], diferencas(base[chave], novo)) : fb.mesclar(DOCS[chave], novo);
+    base[chave] = novo;
+    pr.catch((e) => aviso('Falha ao salvar: ' + e.message));
     delete timers[chave];
   }, 400);
 }
@@ -653,7 +675,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6.1 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.2 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -817,12 +839,15 @@ async function carregarTudo() {
     const [leg, ti, da, plano, cad, ens, pecas] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), fb.listar('pecas')]);
     S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) }; S.da = { ...vazio.da, ...(da || {}) };
     S.plano = { ...vazio.plano, ...(plano || {}) }; S.cad = { ...vazio.cad, ...(cad || {}) };
+    Object.assign(base, { leg: clone(leg), ti: clone(ti), da: clone(da), plano: clone(plano), cad: clone(cad) });
     S.ensaios = ens; S.pecas = pecas;
     carregarBanco().then((b) => { S.banco = b; if (!S.q && S.view !== 'ensaio' && S.view !== 'peca') render(); }).catch((e) => aviso('Erro ao carregar o banco: ' + e.message));
     S.pronto = true;
     for (const k of Object.keys(DOCS)) fb.ouvir(DOCS[k], (d, meta) => {
+      // O servidor já tem a soma das duas máquinas: adota o documento inteiro, sem comparar versão.
       if (!d || meta.hasPendingWrites || timers[k]) return;
-      if ((d.v || 0) > (S[k].v || 0)) { S[k] = { ...vazio[k], ...d }; if (!S.q && S.view !== 'ensaio') render(); }
+      base[k] = clone(d);
+      if (JSON.stringify(d) !== JSON.stringify(S[k])) { S[k] = { ...vazio[k], ...clone(d) }; if (!S.q && S.view !== 'ensaio') render(); }
     });
   } catch (e) {
     S.pronto = true; aviso('Erro ao carregar: ' + e.message);
