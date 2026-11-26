@@ -1,0 +1,73 @@
+// Firebase: login com Google e Firestore com cache local (funciona offline e sincroniza depois).
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  onAuthStateChanged, signOut,
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
+import {
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  doc, getDoc, setDoc, collection, getDocs, deleteDoc, writeBatch, onSnapshot,
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import { firebaseConfig } from './config.js';
+
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+});
+
+export const DONO = 'lucas.vitor.sena@gmail.com';
+
+export function observarLogin(cb) {
+  getRedirectResult(auth).catch(() => {});
+  return onAuthStateChanged(auth, cb);
+}
+
+export async function entrar() {
+  const p = new GoogleAuthProvider();
+  p.setCustomParameters({ login_hint: DONO, prompt: 'select_account' });
+  try {
+    await signInWithPopup(auth, p);
+  } catch (e) {
+    if (e && (e.code === 'auth/popup-blocked' || e.code === 'auth/operation-not-supported-in-this-environment')) {
+      await signInWithRedirect(auth, p);
+    } else throw e;
+  }
+}
+
+export const sair = () => signOut(auth);
+
+export async function ler(caminho) {
+  const s = await getDoc(doc(db, caminho));
+  return s.exists() ? s.data() : null;
+}
+
+export async function gravar(caminho, dados) {
+  await setDoc(doc(db, caminho), dados);
+}
+
+export async function mesclar(caminho, dados) {
+  await setDoc(doc(db, caminho), dados, { merge: true });
+}
+
+export function ouvir(caminho, cb) {
+  return onSnapshot(doc(db, caminho), (s) => cb(s.exists() ? s.data() : null, s.metadata));
+}
+
+export async function listar(colecao) {
+  const s = await getDocs(collection(db, colecao));
+  return s.docs.map((d) => ({ id: d.id, ...d.data() }));
+}
+
+export async function apagar(caminho) {
+  await deleteDoc(doc(db, caminho));
+}
+
+// Grava vários documentos de uma vez (até 500 por lote).
+export async function gravarVarios(pares) {
+  for (let i = 0; i < pares.length; i += 400) {
+    const b = writeBatch(db);
+    pares.slice(i, i + 400).forEach(([c, d]) => b.set(doc(db, c), d));
+    await b.commit();
+  }
+}

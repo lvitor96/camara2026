@@ -1,0 +1,657 @@
+// Câmara 2026 — app de estudo (plano, questões, caderno de erros, ensaios, desempenho).
+import * as fb from './fb.js';
+import { PROVA, CORTES, SEMANAS, roteiro, semanaDe, ROTULO_DIA, resumoDia, MATERIAIS } from './plano.js';
+
+// ---------- utilidades ----------
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const hojeISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10); };
+const somaDias = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+const difDias = (a, b) => Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 864e5);
+const dm = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7);
+const pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '—');
+const sinal = (n) => (n > 0 ? '+' + n : String(n));
+const embaralhar = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const local = {
+  get: (k, d) => { try { const v = localStorage.getItem('c26:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set: (k, v) => { try { localStorage.setItem('c26:' + k, JSON.stringify(v)); } catch {} },
+};
+
+const GRAUS = { c: 'Certeza', d: 'Dúvida', k: 'Chute' };
+const MOTIVOS = { cont: 'Falta de conteúdo', leit: 'Leitura do item', peg: 'Pegadinha da banca', chute: 'Chute', aten: 'Desatenção' };
+const INTERVALOS = [1, 3, 7, 15];
+
+// ---------- estado ----------
+const S = {
+  user: null, pronto: false,
+  banco: null,
+  leg: { hist: [], it: {}, cal: {} },
+  ti: { hist: [], it: {}, cal: {} },
+  plano: { chk: {}, dias: {}, sim: {} },
+  cad: { A: {}, dom: {}, mot: {}, rev: {} },
+  ensaios: [],
+  view: local.get('view', 'hoje'),
+  foco: local.get('foco', false),
+  q: null, ens: null, filtros: local.get('filtros', { banco: 'leg', n: '', o: '', modo: 'novos', qtd: 20 }),
+};
+const DOCS = { leg: 'dados/leg', ti: 'dados/ti', plano: 'dados/plano', cad: 'dados/caderno' };
+
+const timers = {};
+function salvar(chave) {
+  clearTimeout(timers[chave]);
+  timers[chave] = setTimeout(() => {
+    S[chave].v = Date.now();
+    fb.gravar(DOCS[chave], { ...S[chave] }).catch((e) => aviso('Falha ao salvar: ' + e.message));
+    delete timers[chave];
+  }, 400);
+}
+
+function aviso(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('on');
+  clearTimeout(timers._t); timers._t = setTimeout(() => t.classList.remove('on'), 3500);
+}
+
+// ---------- banco ----------
+function itemKey(b, d) { return b + ':' + d.id; }
+function itens(b) { return S.banco ? (b === 'ti' ? S.banco.ti : S.banco.leg) : []; }
+function acharItem(chave) {
+  const [b, id] = chave.split(':');
+  return itens(b).find((d) => String(d.id) === id) || null;
+}
+const origem = (d) => d.o || 'aut';
+const ORIG = { aut: 'Autorais', real: 'Cebraspe (provas reais)', conv: 'FGV convertidas' };
+
+async function carregarBanco() {
+  const meta = await fb.ler('banco/meta');
+  if (!meta) return null;
+  const partes = await Promise.all(Array.from({ length: meta.partes }, (_, i) => fb.ler('banco/p' + i)));
+  const b = { leg: [], ti: [], TX: {}, TXL: meta.TXL || {}, ORIG: meta.ORIG || ORIG, gerado: meta.gerado };
+  partes.forEach((p) => { if (!p) return; b.leg.push(...(p.leg || [])); b.ti.push(...(p.ti || [])); Object.assign(b.TX, p.TX || {}); });
+  return b;
+}
+
+async function importarBanco(json) {
+  const pares = [];
+  const tam = (o) => JSON.stringify(o).length;
+  let atual = { leg: [], ti: [], TX: {} }, n = 0;
+  const fechar = () => { pares.push(['banco/p' + n, atual]); n++; atual = { leg: [], ti: [], TX: {} }; };
+  const LIM = 700000;
+  for (const d of json.leg) { if (tam(atual) + tam(d) > LIM) fechar(); atual.leg.push(d); }
+  for (const d of json.ti) { if (tam(atual) + tam(d) > LIM) fechar(); atual.ti.push(d); }
+  for (const [k, v] of Object.entries(json.TX || {})) { if (tam(atual) + tam(v) > LIM) fechar(); atual.TX[k] = v; }
+  fechar();
+  pares.push(['banco/meta', { partes: n, gerado: json.gerado || new Date().toISOString(), TXL: json.TXL || {}, ORIG: json.ORIG || ORIG, nleg: json.leg.length, nti: json.ti.length }]);
+  await fb.gravarVarios(pares);
+}
+
+// ---------- registro de respostas ----------
+function registrar(b, d, resp, grau) {
+  const st = S[b];
+  const k = String(d.id);
+  const r = st.it[k] || { s: 0, e: 0 };
+  r.s++;
+  const ok = resp === d.g;
+  if (resp !== 'B' && !ok) r.e++;
+  r.u = resp === 'B' ? 'b' : ok ? 'c' : 'e';
+  r.g = grau || '';
+  r.t = Date.now();
+  st.it[k] = r;
+  if (resp !== 'B' && grau) {
+    const bl = d.n || '—';
+    st.cal[bl] = st.cal[bl] || {};
+    const c = st.cal[bl][grau] || [0, 0];
+    c[0]++; if (ok) c[1]++;
+    st.cal[bl][grau] = c;
+  }
+  // caderno de erros
+  const ck = itemKey(b, d);
+  if (resp !== 'B' && !ok) {
+    const a = S.cad.A[ck] || { n: 0 };
+    a.n++; a.g = d.g; a.m = resp; a.last = new Date().toISOString(); a.gr = grau || '';
+    S.cad.A[ck] = a;
+    S.cad.rev[ck] = { box: 0, next: somaDias(hojeISO(), 1) };
+    delete S.cad.dom[ck];
+  } else if (ok && S.cad.A[ck] && !S.cad.dom[ck] && S.q && S.q.revisao) {
+    const rv = S.cad.rev[ck] || { box: 0 };
+    rv.box = (rv.box || 0) + 1;
+    if (rv.box >= INTERVALOS.length) { S.cad.dom[ck] = new Date().toISOString(); delete S.cad.rev[ck]; }
+    else { rv.next = somaDias(hojeISO(), INTERVALOS[rv.box]); S.cad.rev[ck] = rv; }
+  }
+}
+
+// ---------- métricas ----------
+function liquidoSessoes() {
+  const all = [...S.leg.hist.map((h) => ({ ...h, b_: 'leg' })), ...S.ti.hist.map((h) => ({ ...h, b_: 'ti' }))];
+  return all.sort((a, b) => (a.ts || 0) - (b.ts || 0));
+}
+function acertoPorFonte() {
+  const out = {};
+  for (const b of ['leg', 'ti']) {
+    for (const d of itens(b)) {
+      const r = S[b].it[d.id];
+      if (!r || !r.s) continue;
+      const f = out[d.n] = out[d.n] || { s: 0, e: 0 };
+      f.s += r.s; f.e += r.e;
+    }
+  }
+  return Object.entries(out).map(([n, v]) => ({ n, s: v.s, ac: (v.s - v.e) / v.s })).sort((a, b) => b.s - a.s);
+}
+function calibracaoTotal() {
+  const t = { c: [0, 0], d: [0, 0], k: [0, 0] };
+  for (const b of ['leg', 'ti']) for (const bl of Object.values(S[b].cal || {})) for (const g of Object.keys(t)) if (bl[g]) { t[g][0] += bl[g][0]; t[g][1] += bl[g][1]; }
+  for (const e of S.ensaios) { const r = resultadoEnsaio(e); if (r) for (const g of Object.keys(t)) { t[g][0] += r.cal[g][0]; t[g][1] += r.cal[g][1]; } }
+  return t;
+}
+function viesRecente() {
+  const hs = liquidoSessoes().filter((h) => h.mc != null).slice(-10);
+  let mc = 0, gc = 0, n = 0;
+  hs.forEach((h) => { mc += h.mc; gc += h.gc; n += h.c + h.e; });
+  return n ? { mc, gc, n, dif: Math.round(((mc - gc) / n) * 100) } : null;
+}
+
+// ---------- ensaios ----------
+function resultadoEnsaio(e) {
+  if (e.resumo) return null;
+  if (!e.gab || !e.resp) return null;
+  const N = e.n;
+  const r = { p1: 0, p2: 0, c: 0, e: 0, b: 0, x: 0, porBloco: {}, cal: { c: [0, 0], d: [0, 0], k: [0, 0] }, mc: 0, gc: 0, resp: 0 };
+  const blocoDe = (i) => (e.blocos || []).find((b) => i + 1 >= b[0] && i + 1 <= b[1]);
+  for (let i = 0; i < N; i++) {
+    const a = e.resp[i] || '-', g = e.gab[i] || '-', gr = (e.grau || '')[i] || '-';
+    const parte = i < (e.corte || N / 2) ? 'p1' : 'p2';
+    const bl = blocoDe(i); const nome = bl ? bl[2] : '—';
+    const pb = r.porBloco[nome] = r.porBloco[nome] || { c: 0, e: 0, b: 0 };
+    let pts = 0;
+    if (g === 'X') { pts = 1; r.x++; }
+    else if (a === '-') { r.b++; pb.b++; }
+    else if (a === g) { pts = 1; r.c++; pb.c++; }
+    else { pts = -1; r.e++; pb.e++; }
+    r[parte] += pts;
+    if (a !== '-' && g !== 'X' && g !== '-') {
+      r.resp++; if (a === 'C') r.mc++; if (g === 'C') r.gc++;
+      if (GRAUS[gr]) { r.cal[gr][0]++; if (a === g) r.cal[gr][1]++; }
+    }
+  }
+  r.total = r.p1 + r.p2;
+  return r;
+}
+function notaEnsaio(e) {
+  if (e.resumo) return e.resumo;
+  const r = resultadoEnsaio(e); return r ? { p1: r.p1, p2: r.p2, total: r.total } : null;
+}
+
+// ---------- navegação ----------
+const VIEWS = {
+  hoje: { t: 'Hoje', ic: '<path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>' },
+  questoes: { t: 'Questões', ic: '<path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/>' },
+  erros: { t: 'Erros', ic: '<path d="M4 19.5V5a2 2 0 0 1 2-2h14v16H6.5A2.5 2.5 0 0 0 4 21.5z"/>' },
+  desempenho: { t: 'Desempenho', ic: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>' },
+  materiais: { t: 'Materiais', ic: '<path d="M3 7h6l2 2h10v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>' },
+};
+const icone = (p) => `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+
+function nav() {
+  const itensNav = Object.entries(VIEWS).map(([k, v]) => `<a href="#${k}" class="${S.view === k ? 'on' : ''}" data-view="${k}">${icone(v.ic)}<span>${v.t}</span></a>`).join('');
+  $('#nav').innerHTML = `<p class="marca">Câmara 2026</p>${itensNav}<div class="esp"></div><a href="#ajustes" class="${S.view === 'ajustes' ? 'on' : ''}" data-view="ajustes">${icone('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>')}<span>Ajustes</span></a>`;
+}
+
+function ir(view) {
+  if (!VIEWS[view] && view !== 'ajustes' && view !== 'sessao' && view !== 'ensaio') view = 'hoje';
+  S.view = view; if (VIEWS[view] || view === 'ajustes') local.set('view', view);
+  render();
+  window.scrollTo(0, 0);
+}
+
+function render() {
+  nav();
+  const m = $('#main');
+  if (!S.user) { m.innerHTML = telaLogin(); return; }
+  if (!S.pronto) { m.innerHTML = '<p class="carregando">Carregando seus dados…</p>'; return; }
+  const v = { hoje: vHoje, questoes: vQuestoes, sessao: vSessao, erros: vErros, desempenho: vDesempenho, ensaio: vEnsaio, materiais: vMateriais, ajustes: vAjustes }[S.view] || vHoje;
+  m.innerHTML = v();
+  if (S.view === 'ensaio') posEnsaio();
+}
+
+// ---------- telas ----------
+function telaLogin() {
+  return `<section class="login"><h1>Câmara 2026</h1><p>Plano, questões, caderno de erros e ensaios, sincronizados entre celular, iPad e PC.</p>
+  <button class="btn" data-act="entrar">Entrar com Google</button><p class="mut">Só a conta ${esc(fb.DONO)} tem acesso aos dados.</p></section>`;
+}
+
+function trilha(hoje) {
+  const atual = semanaDe(hoje);
+  const barras = SEMANAS.map((s) => `<div class="tb ${hoje > s.fim ? 'feita' : atual && atual.n === s.n ? 'atual' : ''}" title="S${s.n} · ${esc(s.bloco)}"></div>`).join('');
+  const rot = SEMANAS.map((s) => `<span class="${atual && atual.n === s.n ? 'b' : ''}">S${s.n}<i> · ${esc(s.curto)}</i></span>`).join('');
+  return `<section class="trilha" aria-label="Semanas do plano"><div class="tg">${barras}</div><div class="tg rot">${rot}</div></section>`;
+}
+
+function diasSemana(hoje) {
+  const s = semanaDe(hoje);
+  const ini = s ? s.ini : somaDias(hoje, -new Date(hoje + 'T12:00:00').getDay());
+  return `<section class="dias" aria-label="Dias da semana">${Array.from({ length: 7 }, (_, i) => {
+    const d = somaDias(ini, i); const reg = S.plano.dias[d] || {};
+    const cls = d === hoje ? 'hoje' : new Date(d + 'T12:00:00').getDay() === 6 ? 'desc' : '';
+    return `<button class="dia ${cls}" data-act="dia" data-d="${d}"><span class="dl">${ROTULO_DIA[new Date(d + 'T12:00:00').getDay()]} ${d.slice(8)}</span><span class="dr">${reg.ok ? '✓ ' : ''}${esc(resumoDia(d))}</span></button>`;
+  }).join('')}</section>`;
+}
+
+function vHoje() {
+  const hoje = S.diaSel || hojeISO();
+  const s = semanaDe(hoje);
+  const faltam = difDias(hojeISO(), PROVA);
+  const reg = S.plano.dias[hoje] || { m: [] };
+  const marcas = new Set(reg.m || []);
+  const tarefas = roteiro(hoje).map((t) => `<label class="tarefa ${marcas.has(t.k) ? 'feita' : ''}">
+      <input type="checkbox" data-act="marca" data-k="${t.k}" ${marcas.has(t.k) ? 'checked' : ''}>
+      <span><b>${esc(t.t)}</b>${t.h ? ' · ' + esc(t.h) : ''}<br><small>${esc(t.det)}</small></span>
+      ${t.k === 'q' || t.k === 'port' ? `<a class="btn sm" href="#questoes" data-view="questoes">Questões</a>` : ''}
+      ${t.k === 'ens' ? `<a class="btn sm" href="#" data-act="novoEnsaio">Ensaio</a>` : ''}
+      ${t.k === 'corr' ? `<a class="btn sm" href="#erros" data-view="erros">Caderno</a>` : ''}
+    </label>`).join('');
+  const ult = S.leg.hist[S.leg.hist.length - 1];
+  const ultE = S.ensaios.filter((e) => notaEnsaio(e)).sort((a, b) => (a.data < b.data ? 1 : -1))[0];
+  const nE = ultE && notaEnsaio(ultE);
+  const pend = pendentesRevisao().length;
+  const painel = `<aside class="col painel">${blocoDesempenhoCurto()}</aside>`;
+  return `<header class="topo"><div><p class="sub">${new Date(hoje + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit' })}${s ? ' · Semana ' + s.n + ' de 9 · ' + esc(s.bloco) : ''}</p>
+    <h1>Hoje${S.diaSel && S.diaSel !== hojeISO() ? ' <small>(' + dm(S.diaSel) + ')</small>' : ''}</h1></div>
+    <div class="dir"><p class="sub">Prova em 17/01<br><strong class="grande">${faltam} dias</strong></p>
+    <button class="btn sm sec foco-btn" data-act="foco" aria-pressed="${S.foco}">${S.foco ? 'Mostrar desempenho' : 'Modo foco'}</button></div></header>
+    ${trilha(hoje)}${diasSemana(hoje)}
+    <div class="cols ${S.foco ? 'foco' : ''}"><section class="col">
+      <h2>Roteiro · 4 h</h2>${tarefas}
+      <label class="nota"><span>Anotação do dia</span><textarea data-act="anot" rows="3" placeholder="O que foi feito, o que ficou para trás">${esc(reg.a || '')}</textarea></label>
+      <label class="tarefa ${reg.ok ? 'feita' : ''}"><input type="checkbox" data-act="diaok" ${reg.ok ? 'checked' : ''}><span><b>Dia cumprido</b></span></label>
+      <div class="cards3">
+        <div class="card"><p class="mut">Última sessão</p><p class="num">${ult ? ult.c + ' / ' + ult.n : '—'}</p><p class="mut">${ult ? esc(ult.f) + ' · líquido ' + sinal(ult.l) : 'nenhuma ainda'}</p></div>
+        <div class="card"><p class="mut">Último ensaio</p><p class="num ${nE && nE.p1 < CORTES.p1 ? 'alerta' : ''}">${nE ? 'P1 ' + nE.p1 : '—'}</p><p class="mut">${nE ? 'P2 ' + nE.p2 + ' · total ' + nE.total : ''}</p></div>
+        <a class="card" href="#erros" data-view="erros"><p class="mut">Caderno de erros</p><p class="num cor">${pend}</p><p class="mut">para revisar hoje</p></a>
+      </div>
+    </section>${S.foco ? '' : painel}</div>`;
+}
+
+function blocoDesempenhoCurto() {
+  const hs = liquidoSessoes().slice(-12);
+  const vi = viesRecente();
+  return `<h2>Desempenho</h2>${graficoLiquido(hs)}${vi ? `<p class="mut">Viés de Certo (últimas 10 sessões): marcou C em ${pct(vi.mc, vi.n)}; gabarito C em ${pct(vi.gc, vi.n)}. ${Math.abs(vi.dif) > 5 ? '<b class="alerta">Diferença de ' + sinal(vi.dif) + ' p.p.</b>' : 'Equilibrado.'}</p>` : ''}
+  ${tabelaCalibracao(calibracaoTotal())}<p><a href="#desempenho" data-view="desempenho">Ver desempenho completo →</a></p>`;
+}
+
+function graficoLiquido(hs) {
+  if (!hs.length) return '<p class="mut">Sem sessões registradas.</p>';
+  const W = 500, H = 150, pad = 14;
+  const vals = hs.map((h) => h.l);
+  const max = Math.max(5, ...vals), min = Math.min(0, ...vals);
+  const x = (i) => pad + (hs.length === 1 ? (W - 2 * pad) / 2 : (i * (W - 2 * pad)) / (hs.length - 1));
+  const y = (v) => H - pad - ((v - min) / (max - min || 1)) * (H - 2 * pad);
+  const pts = vals.map((v, i) => x(i) + ',' + y(v)).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="150" role="img" aria-label="Líquido por sessão: ${vals.join(', ')}">
+    <line x1="0" y1="${y(0)}" x2="${W}" y2="${y(0)}" stroke="#d6d3d1"/>
+    <polyline fill="none" stroke="var(--ac)" stroke-width="3" stroke-linejoin="round" points="${pts}"/>
+    ${vals.map((v, i) => `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="var(--ac)"><title>${esc(hs[i].d)} · ${esc(hs[i].f)} · ${sinal(v)}</title></circle>`).join('')}
+  </svg><p class="mut">Líquido (C − E) por sessão, últimas ${hs.length}.</p>`;
+}
+
+function tabelaCalibracao(t) {
+  const linhas = Object.entries(GRAUS).map(([g, nome]) => {
+    const [n, ok] = t[g] || [0, 0];
+    const tx = n ? ok / n : null;
+    const leitura = !n ? '—' : g === 'c' ? (tx < 0.85 ? '<b class="alerta">erros com certeza demais</b>' : 'confiável') : tx > 0.55 ? 'compensa marcar' : tx < 0.5 ? '<b class="alerta">deixar em branco</b>' : 'no limite';
+    return `<tr><td>${nome}</td><td class="n">${n}</td><td class="n">${n ? pct(ok, n) : '—'}</td><td>${leitura}</td></tr>`;
+  }).join('');
+  return `<table class="tab"><caption>Calibração: acerto por grau de certeza</caption><thead><tr><th>Grau</th><th class="n">Itens</th><th class="n">Acerto</th><th>Leitura</th></tr></thead><tbody>${linhas}</tbody></table>`;
+}
+
+// ----- Questões -----
+function fontes(b) { return [...new Set(itens(b).map((d) => d.n))]; }
+function vQuestoes() {
+  if (!S.banco) return `<h1>Questões</h1><p>O banco de questões ainda não foi importado. Vá em <a href="#ajustes" data-view="ajustes">Ajustes</a> e importe o arquivo <code>banco.json</code>.</p>`;
+  const f = S.filtros;
+  const opF = fontes(f.banco).map((n) => `<option ${f.n === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
+  const disp = filtrar().length;
+  return `<h1>Questões</h1><form class="filtros" data-form="filtros">
+    <label>Banco<select name="banco"><option value="leg" ${f.banco === 'leg' ? 'selected' : ''}>Legislação e Português (${S.banco.leg.length})</option><option value="ti" ${f.banco === 'ti' ? 'selected' : ''}>TI e Dados (${S.banco.ti.length})</option></select></label>
+    <label>Fonte<select name="n"><option value="">Todas</option>${opF}</select></label>
+    <label>Origem<select name="o"><option value="">Todas</option>${Object.entries(ORIG).map(([k, v]) => `<option value="${k}" ${f.o === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label>Quais<select name="modo">${[['novos', 'Ainda não vistos'], ['erros', 'Só os que já errei'], ['todos', 'Todos']].map(([k, v]) => `<option value="${k}" ${f.modo === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+    <label>Quantidade<select name="qtd">${[10, 20, 40, 90].map((n) => `<option ${+f.qtd === n ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+  </form><p class="mut">${disp} itens disponíveis com esses filtros.</p>
+  <button class="btn" data-act="iniciar" ${disp ? '' : 'disabled'}>Começar</button>
+  <section class="dica"><h2>Como responder</h2><p>Antes de marcar C ou E, diga o grau de certeza. É isso que mostra, com os seus números, quando o chute compensa e quando deixar em branco. Antes de marcar C, procure o erro de propósito.</p></section>`;
+}
+function filtrar() {
+  const f = S.filtros; const st = S[f.banco];
+  return itens(f.banco).filter((d) => (!f.n || d.n === f.n) && (!f.o || origem(d) === f.o) && (
+    f.modo === 'todos' ? true : f.modo === 'novos' ? !st.it[d.id] : (st.it[d.id] && st.it[d.id].e > 0)));
+}
+function iniciarSessao(lista, rotulo, banco, revisao = false) {
+  S.q = { banco, items: lista, i: 0, ans: [], grau: [], t0: Date.now(), f: rotulo, revisao, gsel: null, feito: false };
+  ir('sessao');
+}
+function textoProva(d) {
+  if (!d.x || !S.banco.TX[d.x]) return '';
+  const sig = (d.a || '').match(/^(TQ|TL|CD14|PL|STJ|TRF6|FUB|PF)/); const u = sig && S.banco.TXL[sig[1]];
+  return `<details class="txp" open><summary>Texto da prova${u ? ` · <a href="${esc(u)}" target="_blank" rel="noopener">caderno em PDF</a>` : ''}</summary><pre>${esc(S.banco.TX[d.x])}</pre></details>`;
+}
+function baseLei(d) {
+  if (S.q.banco === 'ti') return (d.FS ? `<p class="ref">Fonte: ${d.FU ? `<a href="${esc(d.FU)}" target="_blank" rel="noopener">${esc(d.FS)}</a>` : esc(d.FS)}</p>` : '') + (d.F ? `<div class="lei"><div class="lt">${esc(d.F)}</div></div>` : '');
+  if (!d.L && !d.J) return d.k ? `<div class="lei"><b>Texto-base:</b> “…${esc(d.k)}…”</div>` : '';
+  return `<div class="lei"><div class="lh">O que a lei diz${d.R ? ' — ' + esc(d.R) : ''}</div>${d.L ? `<div class="lt">${esc(d.L)}</div>` : ''}${d.N ? `<div class="lj">${esc(d.N)}</div>` : ''}</div>`;
+}
+function refItem(d) { if (d.o) return esc(d.s || d.t || ''); return d.a ? `${esc(d.n)}, art. ${esc(d.a)}${d.v ? ' · Vol. ' + d.v : ''}${d.p ? ', p. ' + d.p : ''}` : esc(d.n); }
+
+function vSessao() {
+  const q = S.q; if (!q) { S.view = 'questoes'; return vQuestoes(); }
+  if (q.fim) return resultadoSessao();
+  const d = q.items[q.i];
+  const resp = q.ans[q.i];
+  const grauBtns = Object.entries(GRAUS).map(([g, n]) => `<button class="pill ${q.gsel === g ? 'on' : ''}" data-act="grau" data-g="${g}" ${q.feito ? 'disabled' : ''}>${n}</button>`).join('');
+  let fb = '';
+  if (q.feito) {
+    const ok = resp === d.g, br = resp === 'B';
+    fb = `<div class="fb ${br ? '' : ok ? 'ok' : 'no'}"><b>${br ? 'Em branco' : ok ? 'Correto' : 'Incorreto'} — gabarito: ${d.g === 'C' ? 'CERTO' : 'ERRADO'}</b><p class="just">${esc(d.c)}</p>${baseLei(d)}<p class="ref">${refItem(d)}</p></div>`;
+  }
+  return `<div class="sessao"><div class="sbar"><span>Item ${q.i + 1} de ${q.items.length} · ${esc(d.n)}</span><button class="btn sm sec" data-act="encerrar">Encerrar</button></div>
+    <div class="prog"><div style="width:${(q.i / q.items.length) * 100}%"></div></div>
+    ${textoProva(d)}${d.m || d.cmd ? `<p class="cmd">${esc(d.m || d.cmd)}</p>` : ''}<p class="item">${esc(d.q)}</p>
+    <p class="mut">${q.feito ? '' : q.gsel ? 'Agora responda.' : 'Primeiro, o grau de certeza:'}</p>
+    <div class="graus">${grauBtns}</div>
+    <div class="resp"><button class="btn ce ${resp === 'C' ? 'sel' : ''}" data-act="resp" data-a="C" ${q.feito || !q.gsel ? 'disabled' : ''}>Certo</button><button class="btn ce ${resp === 'E' ? 'sel' : ''}" data-act="resp" data-a="E" ${q.feito || !q.gsel ? 'disabled' : ''}>Errado</button><button class="btn sec" data-act="resp" data-a="B" ${q.feito ? 'disabled' : ''}>Em branco</button></div>
+    ${fb}${q.feito ? `<button class="btn" data-act="prox">${q.i === q.items.length - 1 ? 'Ver resultado' : 'Próximo →'}</button>` : ''}</div>`;
+}
+
+function fecharSessao() {
+  const q = S.q; const n = q.ans.length; if (!n) { S.q = null; ir('questoes'); return; }
+  let c = 0, e = 0, b = 0, mc = 0, gc = 0;
+  q.items.slice(0, n).forEach((d, i) => { const a = q.ans[i]; if (a === 'B') b++; else { if (a === d.g) c++; else e++; if (a === 'C') mc++; if (d.g === 'C') gc++; } });
+  const h = { d: dm(hojeISO()), ts: Date.now(), f: q.f, n, c, e, b, l: c - e, mc, gc, min: Math.round((Date.now() - q.t0) / 60000) };
+  S[q.banco].hist.push(h);
+  salvar(q.banco); salvar('cad');
+  q.fim = h;
+  render();
+}
+function resultadoSessao() {
+  const q = S.q, h = q.fim;
+  const cal = { c: [0, 0], d: [0, 0], k: [0, 0] };
+  q.items.slice(0, h.n).forEach((d, i) => { const a = q.ans[i], g = q.grau[i]; if (a !== 'B' && GRAUS[g]) { cal[g][0]++; if (a === d.g) cal[g][1]++; } });
+  const resp = h.c + h.e;
+  return `<h1>Resultado</h1><div class="cards3"><div class="card"><p class="num">${h.c}</p><p class="mut">acertos</p></div><div class="card"><p class="num">${h.e}</p><p class="mut">erros</p></div><div class="card"><p class="num cor">${sinal(h.l)}</p><p class="mut">líquido (C − E)</p></div></div>
+  <p>${h.b} em branco · ${h.min} min (${h.n ? Math.round((h.min * 60) / h.n) : 0} s por item).</p>
+  ${resp ? `<p>Marcou Certo em ${pct(h.mc, resp)} dos respondidos; o gabarito era Certo em ${pct(h.gc, resp)}. ${Math.abs(Math.round(((h.mc - h.gc) / resp) * 100)) > 5 ? '<b class="alerta">Viés de ' + sinal(Math.round(((h.mc - h.gc) / resp) * 100)) + ' p.p.</b>' : ''}</p>` : ''}
+  ${tabelaCalibracao(cal)}
+  <p><button class="btn" data-view="questoes">Nova sessão</button> <button class="btn sec" data-view="erros">Caderno de erros</button></p>`;
+}
+
+// ----- Caderno de erros -----
+function pendentesRevisao() {
+  const hoje = hojeISO();
+  return Object.keys(S.cad.A).filter((k) => !S.cad.dom[k] && (!S.cad.rev[k] || (S.cad.rev[k].next || '') <= hoje));
+}
+function vErros() {
+  const todos = Object.entries(S.cad.A).filter(([k]) => !S.cad.dom[k]);
+  const pend = new Set(pendentesRevisao());
+  const filtro = S.errFiltro || 'pend';
+  let lista = todos.filter(([k]) => filtro === 'todos' || pend.has(k));
+  if (filtro === 'semmot') lista = todos.filter(([k]) => !S.cad.mot[k]);
+  lista.sort((a, b) => (b[1].last || '').localeCompare(a[1].last || ''));
+  const contMot = {}; todos.forEach(([k]) => { const m = S.cad.mot[k] || 'sem'; contMot[m] = (contMot[m] || 0) + 1; });
+  const linhas = lista.slice(0, 80).map(([k, a]) => {
+    const d = acharItem(k);
+    if (!d) return '';
+    return `<article class="erro"><p class="mut">${esc(d.n)} · errou ${a.n}× · marcou ${esc(a.m)}, gabarito ${esc(d.g)}${a.gr ? ' · ' + GRAUS[a.gr] : ''}</p><p>${esc(d.q)}</p>
+      <details><summary>Ver comentário</summary><p class="just">${esc(d.c)}</p></details>
+      <div class="linha"><select data-act="motivo" data-k="${k}"><option value="">Motivo do erro…</option>${Object.entries(MOTIVOS).map(([m, t]) => `<option value="${m}" ${S.cad.mot[k] === m ? 'selected' : ''}>${t}</option>`).join('')}</select>
+      <button class="btn sm sec" data-act="dominei" data-k="${k}">Dominei</button></div></article>`;
+  }).join('');
+  return `<h1>Caderno de erros</h1><p class="mut">${todos.length} itens em aberto · ${pend.size} para revisar hoje. Acerto na revisão sobe o intervalo (1, 3, 7, 15 dias); depois do quarto acerto, o item vai para dominados.</p>
+  <p class="mot">${Object.entries(contMot).map(([m, n]) => `<span class="tag">${m === 'sem' ? 'Sem motivo' : MOTIVOS[m]}: ${n}</span>`).join(' ')}</p>
+  <div class="linha"><button class="btn" data-act="revisar" ${pend.size ? '' : 'disabled'}>Revisar os ${pend.size} de hoje</button>
+  <select data-act="errFiltro"><option value="pend" ${filtro === 'pend' ? 'selected' : ''}>Para revisar hoje</option><option value="semmot" ${filtro === 'semmot' ? 'selected' : ''}>Sem motivo marcado</option><option value="todos" ${filtro === 'todos' ? 'selected' : ''}>Todos em aberto</option></select></div>
+  ${linhas || '<p class="mut">Nada aqui.</p>'}${lista.length > 80 ? `<p class="mut">Mostrando 80 de ${lista.length}.</p>` : ''}`;
+}
+
+// ----- Desempenho -----
+function vDesempenho() {
+  const ens = S.ensaios.slice().sort((a, b) => (a.data < b.data ? -1 : 1));
+  const resolvidos = Object.values(S.leg.it).reduce((s, r) => s + r.s, 0) + Object.values(S.ti.it).reduce((s, r) => s + r.s, 0);
+  const ultE = ens.filter((e) => notaEnsaio(e)).slice(-1)[0]; const nE = ultE && notaEnsaio(ultE);
+  const fontesAc = acertoPorFonte().slice(0, 12).map((f) => `<div class="barra"><span>${esc(f.n)}</span><div class="bt"><div style="width:${Math.max(0, f.ac) * 100}%"></div></div><span class="n">${Math.round(f.ac * 100)}%</span><span class="mut n">${f.s}</span></div>`).join('');
+  const linhasEns = ens.map((e) => { const n = notaEnsaio(e); return `<tr><td>${dm(e.data)}</td><td>${esc(e.nome)}</td><td class="n ${n && n.p1 < CORTES.p1 ? 'alerta' : ''}">${n ? n.p1 : '—'}</td><td class="n ${n && n.p2 < CORTES.p2 ? 'alerta' : ''}">${n ? n.p2 : '—'}</td><td class="n ${n && n.total < CORTES.total ? 'alerta' : ''}">${n ? n.total : '—'}</td><td><a href="#" data-act="abrirEnsaio" data-id="${e.id}">${e.gab || e.resumo ? 'ver' : 'continuar'}</a></td></tr>`; }).join('');
+  return `<h1>Desempenho</h1>
+  <div class="cards4"><div class="card"><p class="mut">Até a prova</p><p class="num cor">${difDias(hojeISO(), PROVA)} dias</p></div>
+  <div class="card"><p class="mut">Último ensaio · P1</p><p class="num ${nE && nE.p1 < CORTES.p1 ? 'alerta' : ''}">${nE ? nE.p1 + ' / ' + CORTES.p1 : '—'}</p></div>
+  <div class="card"><p class="mut">Último ensaio · P2</p><p class="num ${nE && nE.p2 < CORTES.p2 ? 'alerta' : ''}">${nE ? nE.p2 + ' / ' + CORTES.p2 : '—'}</p></div>
+  <div class="card"><p class="mut">Itens resolvidos</p><p class="num">${resolvidos}</p></div></div>
+  <section><h2>Ensaios</h2><p class="mut">Cortes: ${CORTES.p1} em P1, ${CORTES.p2} em P2, ${CORTES.total} no total. Em vermelho, abaixo do corte.</p>
+  <table class="tab"><thead><tr><th>Data</th><th>Ensaio</th><th class="n">P1</th><th class="n">P2</th><th class="n">Total</th><th></th></tr></thead><tbody>${linhasEns || '<tr><td colspan="6" class="mut">Nenhum ensaio.</td></tr>'}</tbody></table>
+  <button class="btn" data-act="novoEnsaio">Novo ensaio</button></section>
+  <section><h2>Questões</h2>${graficoLiquido(liquidoSessoes().slice(-20))}</section>
+  <section><h2>Acerto por fonte</h2><p class="mut">Percentual líquido de acerto (vistas − erros) / vistas, e número de respostas.</p>${fontesAc || '<p class="mut">Sem dados.</p>'}</section>
+  <section><h2>Calibração</h2>${tabelaCalibracao(calibracaoTotal())}<p class="mut">Inclui questões e ensaios. Acerto acima de 50% num grau quer dizer que marcar naquele grau soma pontos; abaixo, tira.</p></section>`;
+}
+
+// ----- Ensaio -----
+function novoEnsaio() {
+  const id = 'e' + Date.now();
+  S.ens = { id, data: hojeISO(), nome: 'Ensaio ' + dm(hojeISO()), n: 90, corte: 90, resp: '', grau: '', gab: '', blocos: [], tempo: 0, rodando: false, etapa: 'config', blocosTxt: '1-26 Língua Portuguesa\n27-36 Língua Inglesa\n37-46 Lógica e raciocínio\n47-60 Direito Administrativo\n61-90 Conhecimentos gerais' };
+  ir('ensaio');
+}
+function parseBlocos(txt) {
+  return txt.split('\n').map((l) => l.trim().match(/^(\d+)\s*[-–]\s*(\d+)\s+(.+)$/)).filter(Boolean).map((m) => [+m[1], +m[2], m[3].trim()]);
+}
+function salvarEnsaio() {
+  const e = S.ens; if (!e) return;
+  const { rodando, etapa, ...dados } = e;
+  const i = S.ensaios.findIndex((x) => x.id === e.id);
+  if (i >= 0) S.ensaios[i] = dados; else S.ensaios.push(dados);
+  clearTimeout(timers.ens);
+  timers.ens = setTimeout(() => fb.gravar('ensaios/' + e.id, { ...dados, v: Date.now() }).catch((er) => aviso('Falha ao salvar o ensaio: ' + er.message)), 500);
+}
+function vEnsaio() {
+  const e = S.ens; if (!e) return vDesempenho();
+  if (e.resumo) return `<h1>${esc(e.nome)}</h1><p>${dm(e.data)} · registro resumido.</p><div class="cards3"><div class="card"><p class="mut">P1</p><p class="num ${e.resumo.p1 < CORTES.p1 ? 'alerta' : ''}">${e.resumo.p1}</p></div><div class="card"><p class="mut">P2</p><p class="num">${e.resumo.p2}</p></div><div class="card"><p class="mut">Total</p><p class="num">${e.resumo.total}</p></div></div><p class="just">${esc(e.obs || '')}</p><button class="btn sec" data-view="desempenho">Voltar</button>`;
+  if (e.etapa === 'config') return `<h1>Novo ensaio</h1><form class="filtros" data-form="ensaio">
+    <label>Nome<input name="nome" value="${esc(e.nome)}"></label>
+    <label>Itens<select name="n"><option ${e.n === 90 ? 'selected' : ''}>90</option><option ${e.n === 180 ? 'selected' : ''}>180</option></select></label>
+    <label>Fim da P1 no item<input name="corte" type="number" value="${e.corte}"></label>
+    <label class="larga">Blocos (um por linha: início-fim nome)<textarea name="blocos" rows="6">${esc(e.blocosTxt)}</textarea></label></form>
+    <p class="mut">Ensaio de 90 itens: só a P1. De 180: P1 vai até o item 90. O cronômetro alerta se você estiver indo rápido demais (piso de 2 h para 90 itens = 80 s por item).</p>
+    <button class="btn" data-act="ensComecar">Abrir folha de respostas</button>`;
+  const r = e.gab ? resultadoEnsaio(e) : null;
+  const marc = (e.resp.match(/[CE]/g) || []).length;
+  const ritmo = marc ? Math.round(e.tempo / marc) : 0;
+  const folha = Array.from({ length: e.n }, (_, i) => {
+    const a = e.resp[i] || '-', g = e.grau[i] || '-', gb = e.gab ? e.gab[i] : '';
+    const st = gb ? (gb === 'X' ? 'anul' : a === '-' ? '' : a === gb ? 'ok' : 'no') : '';
+    return `<div class="fi ${st}"><span class="fn">${i + 1}</span>${['C', 'E'].map((x) => `<button class="fx ${a === x ? 'on' : ''}" data-act="fmarca" data-i="${i}" data-a="${x}" aria-label="Item ${i + 1} ${x}">${x}</button>`).join('')}${Object.keys(GRAUS).map((x) => `<button class="fg ${g === x ? 'on' : ''}" data-act="fgrau" data-i="${i}" data-g="${x}" title="${GRAUS[x]}" aria-label="Item ${i + 1} ${GRAUS[x]}">${{ c: 'Ce', d: 'Dú', k: 'Ch' }[x]}</button>`).join('')}${gb ? `<span class="gb">${gb}</span>` : ''}</div>`;
+  }).join('');
+  const res = r ? `<section class="resultado"><h2>Resultado</h2><div class="cards3"><div class="card"><p class="mut">P1 (corte ${CORTES.p1})</p><p class="num ${r.p1 < CORTES.p1 ? 'alerta' : ''}">${r.p1}</p></div>${e.n > (e.corte || 90) ? `<div class="card"><p class="mut">P2 (corte ${CORTES.p2})</p><p class="num ${r.p2 < CORTES.p2 ? 'alerta' : ''}">${r.p2}</p></div>` : ''}<div class="card"><p class="mut">Total</p><p class="num">${r.total}</p></div></div>
+    <p>${r.c} certos · ${r.e} errados · ${r.b} em branco · ${r.x} anulados (contam a favor). Marcou C em ${pct(r.mc, r.resp)}; gabarito C em ${pct(r.gc, r.resp)}${Math.abs(Math.round(((r.mc - r.gc) / (r.resp || 1)) * 100)) > 5 ? ' — <b class="alerta">viés de ' + sinal(Math.round(((r.mc - r.gc) / r.resp) * 100)) + ' p.p.</b>' : ''}.</p>
+    <table class="tab"><thead><tr><th>Bloco</th><th class="n">C</th><th class="n">E</th><th class="n">Branco</th><th class="n">Líquido</th></tr></thead><tbody>${Object.entries(r.porBloco).map(([n, v]) => `<tr><td>${esc(n)}</td><td class="n">${v.c}</td><td class="n">${v.e}</td><td class="n">${v.b}</td><td class="n ${v.c - v.e < 0 ? 'alerta' : ''}">${sinal(v.c - v.e)}</td></tr>`).join('')}</tbody></table>
+    ${tabelaCalibracao(r.cal)}</section>` : '';
+  return `<div class="ensaio-top"><div><h1>${esc(e.nome)}</h1><p class="mut">${dm(e.data)} · ${e.n} itens · ${marc} marcados</p></div>
+    <div class="relogio"><span id="rel">${fmtTempo(e.tempo)}</span><span class="mut" id="ritmo">${ritmo ? ritmo + ' s/item' : ''}</span>
+    <button class="btn sm" data-act="relogio">${e.rodando ? 'Pausar' : 'Iniciar'}</button></div></div>
+    ${ritmo && ritmo < 60 && marc > 10 ? '<p class="alerta">Ritmo abaixo de 60 s por item. O piso é 80 s. Volte ao texto antes de marcar.</p>' : ''}
+    <p class="mut">Para cada item: C ou E (toque de novo para desmarcar) e o grau: Ce = certeza, Dú = dúvida, Ch = chute.</p>
+    <div class="folha">${folha}</div>
+    <section><h2>Corrigir</h2><p class="mut">Cole o gabarito definitivo, um caractere por item: C, E ou X para anulado. Espaços e quebras de linha são ignorados.</p>
+    <textarea data-act="gab" rows="3" placeholder="CEECE…">${esc(e.gab)}</textarea><button class="btn" data-act="corrigir">Corrigir</button></section>${res}
+    <p><button class="btn sec" data-act="ensSair">Salvar e sair</button></p>`;
+}
+function fmtTempo(s) { const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60; return `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; }
+function posEnsaio() {
+  clearInterval(timers.rel);
+  const e = S.ens; if (!e || !e.rodando) return;
+  timers.rel = setInterval(() => {
+    e.tempo++; const el = $('#rel'); if (el) el.textContent = fmtTempo(e.tempo);
+    if (e.tempo % 30 === 0) salvarEnsaio();
+  }, 1000);
+}
+
+// ----- Materiais e ajustes -----
+function vMateriais() {
+  return `<h1>Materiais</h1>${MATERIAIS.map((g) => `<section><h2>${esc(g.g)}</h2><ul class="links">${g.itens.map((i) => `<li><a href="${esc(i.u)}" target="_blank" rel="noopener">${esc(i.t)}</a></li>`).join('')}</ul></section>`).join('')}`;
+}
+function vAjustes() {
+  const b = S.banco;
+  return `<h1>Ajustes</h1><section><h2>Conta</h2><p>${esc(S.user.email)}</p><button class="btn sec" data-act="sair">Sair</button></section>
+  <section><h2>Banco de questões</h2><p>${b ? `${b.leg.length} itens de legislação e Português, ${b.ti.length} de TI. Gerado em ${esc((b.gerado || '').slice(0, 10))}.` : 'Ainda não importado.'}</p>
+  <label class="btn sec">Importar banco.json<input type="file" accept=".json,application/json" data-act="impBanco" hidden></label></section>
+  <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
+  <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
+  <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
+  <section><h2>Sobre</h2><p class="mut">Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+}
+
+async function importarProgresso(p) {
+  const mesclaIt = (a, b) => { for (const [k, v] of Object.entries(b || {})) { const o = a[k]; a[k] = !o ? v : { ...o, s: Math.max(o.s, v.s), e: Math.max(o.e, v.e) }; } };
+  for (const b of ['leg', 'ti']) if (p[b]) {
+    const ja = new Set(S[b].hist.map((h) => h.ts + '|' + h.f + '|' + h.n));
+    (p[b].hist || []).forEach((h) => { if (!ja.has(h.ts + '|' + h.f + '|' + h.n)) S[b].hist.push(h); });
+    S[b].hist.sort((x, y) => (x.ts || 0) - (y.ts || 0));
+    mesclaIt(S[b].it, p[b].it);
+    salvar(b);
+  }
+  if (p.plano) {
+    Object.assign(S.plano.chk, p.plano.chk || {});
+    for (const [d, v] of Object.entries(p.plano.dias || {})) S.plano.dias[d] = { ...(v || {}), ...(S.plano.dias[d] || {}) };
+    Object.assign(S.plano.sim, p.plano.sim || {});
+    salvar('plano');
+  }
+  if (p.cad) {
+    for (const [k, v] of Object.entries(p.cad.A || {})) if (!S.cad.A[k]) { S.cad.A[k] = v; S.cad.rev[k] = S.cad.rev[k] || { box: 0, next: hojeISO() }; }
+    Object.assign(S.cad.dom, p.cad.dom || {});
+    salvar('cad');
+  }
+  for (const e of p.ensaios || []) if (!S.ensaios.find((x) => x.id === e.id)) { S.ensaios.push(e); await fb.gravar('ensaios/' + e.id, e); }
+}
+
+// ---------- eventos ----------
+document.addEventListener('click', async (ev) => {
+  const a = ev.target.closest('[data-view],[data-act]');
+  if (!a) return;
+  if (a.dataset.view) { ev.preventDefault(); if (a.dataset.view === 'hoje') S.diaSel = null; ir(a.dataset.view); return; }
+  const act = a.dataset.act;
+  const tagInput = a.tagName === 'INPUT' || a.tagName === 'SELECT' || a.tagName === 'TEXTAREA';
+  if (tagInput) return; // tratados em 'change'/'input'
+  ev.preventDefault();
+  const q = S.q, e = S.ens;
+  switch (act) {
+    case 'entrar': try { await fb.entrar(); } catch (er) { aviso('Não foi possível entrar: ' + er.message); } break;
+    case 'sair': await fb.sair(); location.reload(); break;
+    case 'foco': S.foco = !S.foco; local.set('foco', S.foco); render(); break;
+    case 'dia': S.diaSel = a.dataset.d; render(); break;
+    case 'iniciar': { const l = embaralhar(filtrar()).slice(0, +S.filtros.qtd); const f = S.filtros; iniciarSessao(l, (f.n || (f.banco === 'ti' ? 'TI e Dados' : 'Legislação')) + (f.modo === 'erros' ? ' · meus erros' : ''), f.banco); break; }
+    case 'grau': if (q && !q.feito) { q.gsel = a.dataset.g; render(); } break;
+    case 'resp': if (q && !q.feito) { const r = a.dataset.a; q.ans[q.i] = r; q.grau[q.i] = r === 'B' ? '' : q.gsel; q.feito = true; registrar(q.banco, q.items[q.i], r, q.grau[q.i]); salvar(q.banco); salvar('cad'); render(); } break;
+    case 'prox': if (q) { if (q.i < q.items.length - 1) { q.i++; q.feito = false; q.gsel = null; render(); window.scrollTo(0, 0); } else fecharSessao(); } break;
+    case 'encerrar': if (q) { q.items = q.items.slice(0, q.ans.length); fecharSessao(); } break;
+    case 'dominei': S.cad.dom[a.dataset.k] = new Date().toISOString(); delete S.cad.rev[a.dataset.k]; salvar('cad'); render(); break;
+    case 'revisar': {
+      const ks = pendentesRevisao();
+      const leg = ks.filter((k) => k.startsWith('leg:')).map(acharItem).filter(Boolean);
+      const ti = ks.filter((k) => k.startsWith('ti:')).map(acharItem).filter(Boolean);
+      if (leg.length) iniciarSessao(embaralhar(leg).slice(0, 40), 'Revisão do caderno', 'leg', true);
+      else if (ti.length) iniciarSessao(embaralhar(ti).slice(0, 40), 'Revisão do caderno · TI', 'ti', true);
+      break;
+    }
+    case 'novoEnsaio': novoEnsaio(); break;
+    case 'abrirEnsaio': { const x = S.ensaios.find((y) => y.id === a.dataset.id); if (x) { S.ens = { ...x, rodando: false, etapa: 'folha' }; ir('ensaio'); } break; }
+    case 'ensComecar': {
+      const f = $('[data-form="ensaio"]'); const fd = new FormData(f);
+      e.nome = fd.get('nome') || e.nome; e.n = +fd.get('n'); e.corte = +fd.get('corte') || 90; e.blocosTxt = fd.get('blocos'); e.blocos = parseBlocos(e.blocosTxt);
+      e.resp = '-'.repeat(e.n); e.grau = '-'.repeat(e.n); e.etapa = 'folha'; salvarEnsaio(); render(); break;
+    }
+    case 'fmarca': { const i = +a.dataset.i, v = a.dataset.a; const arr = e.resp.padEnd(e.n, '-').split(''); arr[i] = arr[i] === v ? '-' : v; e.resp = arr.join(''); salvarEnsaio(); atualizaFolha(i); break; }
+    case 'fgrau': { const i = +a.dataset.i, v = a.dataset.g; const arr = e.grau.padEnd(e.n, '-').split(''); arr[i] = arr[i] === v ? '-' : v; e.grau = arr.join(''); salvarEnsaio(); atualizaFolha(i); break; }
+    case 'relogio': e.rodando = !e.rodando; salvarEnsaio(); render(); break;
+    case 'corrigir': {
+      const t = ($('[data-act="gab"]').value || '').toUpperCase().replace(/[^CEX]/g, '');
+      if (t.length !== e.n) { aviso(`O gabarito tem ${t.length} itens; o ensaio tem ${e.n}.`); break; }
+      e.gab = t; e.rodando = false; salvarEnsaio();
+      // erros do ensaio não entram no caderno automaticamente: os itens não estão no banco.
+      render(); break;
+    }
+    case 'ensSair': e.rodando = false; salvarEnsaio(); clearInterval(timers.rel); S.ens = null; ir('desempenho'); break;
+    case 'exportar': {
+      const blob = new Blob([JSON.stringify({ leg: S.leg, ti: S.ti, plano: S.plano, cad: S.cad, ensaios: S.ensaios, em: new Date().toISOString() })], { type: 'application/json' });
+      const u = URL.createObjectURL(blob); const l = document.createElement('a'); l.href = u; l.download = 'camara2026-copia-' + hojeISO() + '.json'; l.click(); URL.revokeObjectURL(u); break;
+    }
+    default: break;
+  }
+});
+
+function atualizaFolha(i) {
+  const e = S.ens; const linha = document.querySelectorAll('.fi')[i]; if (!linha) return;
+  linha.querySelectorAll('.fx').forEach((b) => b.classList.toggle('on', e.resp[i] === b.dataset.a));
+  linha.querySelectorAll('.fg').forEach((b) => b.classList.toggle('on', e.grau[i] === b.dataset.g));
+}
+
+document.addEventListener('change', async (ev) => {
+  const t = ev.target;
+  const form = t.closest('[data-form="filtros"]');
+  if (form) { S.filtros[t.name] = t.value; if (t.name === 'banco') S.filtros.n = ''; local.set('filtros', S.filtros); render(); return; }
+  const act = t.dataset.act;
+  const dia = S.diaSel || hojeISO();
+  if (act === 'marca') {
+    const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; const m = new Set(r.m || []);
+    if (t.checked) m.add(t.dataset.k); else m.delete(t.dataset.k);
+    r.m = [...m]; salvar('plano'); render();
+  } else if (act === 'diaok') {
+    const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; r.ok = t.checked; salvar('plano'); render();
+  } else if (act === 'motivo') {
+    if (t.value) S.cad.mot[t.dataset.k] = t.value; else delete S.cad.mot[t.dataset.k]; salvar('cad');
+  } else if (act === 'errFiltro') { S.errFiltro = t.value; render(); }
+  else if (act === 'impBanco' || act === 'impProg') {
+    const f = t.files[0]; if (!f) return;
+    try {
+      const j = JSON.parse(await f.text());
+      if (act === 'impBanco') {
+        if (!j.leg || !j.ti) throw new Error('arquivo não parece ser o banco');
+        aviso('Importando o banco…'); await importarBanco(j); S.banco = await carregarBanco(); aviso('Banco importado.');
+      } else { aviso('Importando o progresso…'); await importarProgresso(j); aviso('Progresso importado.'); }
+      render();
+    } catch (er) { aviso('Falha na importação: ' + er.message); }
+  }
+});
+
+document.addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (t.dataset.act === 'anot') {
+    const dia = S.diaSel || hojeISO();
+    const r = S.plano.dias[dia] = S.plano.dias[dia] || { m: [] }; r.a = t.value; salvar('plano');
+  }
+});
+
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v && v !== S.view && (VIEWS[v] || v === 'ajustes')) ir(v); });
+
+// ---------- inicialização ----------
+const vazio = { leg: { hist: [], it: {}, cal: {} }, ti: { hist: [], it: {}, cal: {} }, plano: { chk: {}, dias: {}, sim: {} }, cad: { A: {}, dom: {}, mot: {}, rev: {} } };
+async function carregarTudo() {
+  S.pronto = false; render();
+  try {
+    const [leg, ti, plano, cad, ens, banco] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco()]);
+    S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) };
+    S.plano = { ...vazio.plano, ...(plano || {}) }; S.cad = { ...vazio.cad, ...(cad || {}) };
+    S.ensaios = ens; S.banco = banco;
+    S.pronto = true;
+    for (const k of Object.keys(DOCS)) fb.ouvir(DOCS[k], (d, meta) => {
+      if (!d || meta.hasPendingWrites || timers[k]) return;
+      if ((d.v || 0) > (S[k].v || 0)) { S[k] = { ...vazio[k], ...d }; if (!S.q && S.view !== 'ensaio') render(); }
+    });
+  } catch (e) {
+    S.pronto = true; aviso('Erro ao carregar: ' + e.message);
+  }
+  const h = location.hash.slice(1); if (h && (VIEWS[h] || h === 'ajustes')) S.view = h;
+  render();
+}
+
+fb.observarLogin((u) => {
+  if (u && u.email !== fb.DONO) { aviso('Esta conta não tem acesso. Entre com ' + fb.DONO + '.'); fb.sair(); return; }
+  S.user = u;
+  if (u) carregarTudo(); else render();
+});
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
+render();
