@@ -312,7 +312,7 @@ function tabelaCalibracao(t) {
 // ----- Questões -----
 function fontes(b) { return [...new Set(itens(b).map((d) => d.n))]; }
 function vQuestoes() {
-  if (!S.banco) return `<h1>Questões</h1><p>O banco de questões ainda não foi importado. Vá em <a href="#ajustes" data-view="ajustes">Ajustes</a> e importe o arquivo <code>banco.json</code>.</p>`;
+  if (!S.banco) return `<h1>Questões</h1><p>Carregando o banco de questões… Se demorar e nada aparecer, o banco ainda não foi importado. Vá em <a href="#ajustes" data-view="ajustes">Ajustes</a> e importe o arquivo <code>banco.json</code>.</p>`;
   const f = S.filtros;
   const opF = fontes(f.banco).map((n) => `<option ${f.n === n ? 'selected' : ''}>${esc(n)}</option>`).join('');
   const disp = filtrar().length;
@@ -653,7 +653,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.1 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -814,10 +814,11 @@ const vazio = { leg: { hist: [], it: {}, cal: {} }, ti: { hist: [], it: {}, cal:
 async function carregarTudo() {
   S.pronto = false; render();
   try {
-    const [leg, ti, da, plano, cad, ens, banco, pecas] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), carregarBanco(), fb.listar('pecas')]);
+    const [leg, ti, da, plano, cad, ens, pecas] = await Promise.all([fb.ler(DOCS.leg), fb.ler(DOCS.ti), fb.ler(DOCS.da), fb.ler(DOCS.plano), fb.ler(DOCS.cad), fb.listar('ensaios'), fb.listar('pecas')]);
     S.leg = { ...vazio.leg, ...(leg || {}) }; S.ti = { ...vazio.ti, ...(ti || {}) }; S.da = { ...vazio.da, ...(da || {}) };
     S.plano = { ...vazio.plano, ...(plano || {}) }; S.cad = { ...vazio.cad, ...(cad || {}) };
-    S.ensaios = ens; S.banco = banco; S.pecas = pecas;
+    S.ensaios = ens; S.pecas = pecas;
+    carregarBanco().then((b) => { S.banco = b; if (!S.q && S.view !== 'ensaio' && S.view !== 'peca') render(); }).catch((e) => aviso('Erro ao carregar o banco: ' + e.message));
     S.pronto = true;
     for (const k of Object.keys(DOCS)) fb.ouvir(DOCS[k], (d, meta) => {
       if (!d || meta.hasPendingWrites || timers[k]) return;
