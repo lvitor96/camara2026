@@ -36,6 +36,7 @@ const S = {
   ensaios: [], pecas: [], peca: null,
   view: local.get('view', 'hoje'),
   foco: local.get('foco', false),
+  errAss: local.get('errAss', ''),
   q: null, ens: null, filtros: local.get('filtros', { banco: 'leg', n: '', o: '', modo: 'novos', qtd: 20 }),
 };
 const DOCS = { leg: 'dados/leg', ti: 'dados/ti', da: 'dados/da', plano: 'dados/plano', cad: 'dados/caderno' };
@@ -424,8 +425,16 @@ function vErros() {
   const todos = Object.entries(S.cad.A).filter(([k]) => !S.cad.dom[k]);
   const pend = new Set(pendentesRevisao());
   const filtro = S.errFiltro || 'pend';
-  let lista = todos.filter(([k]) => filtro === 'todos' || pend.has(k));
-  if (filtro === 'semmot') lista = todos.filter(([k]) => !S.cad.mot[k]);
+  // Assuntos presentes nos erros em aberto, agrupados por disciplina (banco)
+  const grupos = {};
+  todos.forEach(([k]) => { const d = acharItem(k); if (!d) return; const b = k.split(':')[0]; const g = grupos[b] = grupos[b] || {}; g[d.n || '—'] = (g[d.n || '—'] || 0) + 1; });
+  const ass = S.errAss || '';
+  const noAss = (k) => { if (!ass) return true; const [b] = k.split(':'); const [fb_, fn] = ass.split('|'); if (b !== fb_) return false; if (fn === undefined) return true; const d = acharItem(k); return d && (d.n || '—') === fn; };
+  let lista = todos.filter(([k]) => (filtro === 'todos' || pend.has(k)) && noAss(k));
+  if (filtro === 'semmot') lista = todos.filter(([k]) => !S.cad.mot[k] && noAss(k));
+  const pendF = [...pend].filter(noAss).length;
+  const NOMEB = { ...BANCOS, cad: 'Diagnóstico' };
+  const opAss = `<select data-act="errAss"><option value="">Todas as disciplinas</option>${Object.entries(grupos).map(([b, g]) => `<optgroup label="${esc(NOMEB[b] || b)}"><option value="${b}" ${ass === b ? 'selected' : ''}>${esc(NOMEB[b] || b)}: tudo (${Object.values(g).reduce((x, y) => x + y, 0)})</option>${Object.entries(g).sort((x, y) => x[0].localeCompare(y[0], 'pt')).map(([n, c]) => `<option value="${esc(b + '|' + n)}" ${ass === b + '|' + n ? 'selected' : ''}>${esc(n)} (${c})</option>`).join('')}</optgroup>`).join('')}</select>`;
   lista.sort((a, b) => (b[1].last || '').localeCompare(a[1].last || ''));
   const contMot = {}; todos.forEach(([k]) => { const m = S.cad.mot[k] || 'sem'; contMot[m] = (contMot[m] || 0) + 1; });
   const linhas = lista.slice(0, 80).map(([k, a]) => {
@@ -438,7 +447,8 @@ function vErros() {
   }).join('');
   return `<h1>Caderno de erros</h1><p class="mut">${todos.length} itens em aberto · ${pend.size} para revisar hoje. Acerto na revisão sobe o intervalo (1, 3, 7, 15 dias); depois do quarto acerto, o item vai para dominados.</p>
   <p class="mot">${Object.entries(contMot).map(([m, n]) => `<span class="tag">${m === 'sem' ? 'Sem motivo' : MOTIVOS[m]}: ${n}</span>`).join(' ')}</p>
-  <div class="linha"><button class="btn" data-act="revisar" ${pend.size ? '' : 'disabled'}>Revisar os ${pend.size} de hoje</button>
+  <div class="linha">${opAss}</div>
+  <div class="linha"><button class="btn" data-act="revisar" ${pendF ? '' : 'disabled'}>Revisar os ${pendF} de hoje${ass ? ' deste filtro' : ''}</button>
   <select data-act="errFiltro"><option value="pend" ${filtro === 'pend' ? 'selected' : ''}>Para revisar hoje</option><option value="semmot" ${filtro === 'semmot' ? 'selected' : ''}>Sem motivo marcado</option><option value="todos" ${filtro === 'todos' ? 'selected' : ''}>Todos em aberto</option></select></div>
   ${linhas || '<p class="mut">Nada aqui.</p>'}${lista.length > 80 ? `<p class="mut">Mostrando 80 de ${lista.length}.</p>` : ''}`;
 }
@@ -680,7 +690,7 @@ function vAjustes() {
   <section><h2>Progresso</h2><p class="mut">Importa o arquivo de migração gerado a partir dos artefatos antigos. Mescla com o que já existe: não apaga nada.</p>
   <label class="btn sec">Importar progresso.json<input type="file" accept=".json,application/json" data-act="impProg" hidden></label>
   <button class="btn sec" data-act="exportar">Baixar cópia de segurança</button></section>
-  <section><h2>Sobre</h2><p class="mut">Versão 6.3 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
+  <section><h2>Sobre</h2><p class="mut">Versão 6.4 (26/11). Dados no Firebase (projeto camara2026-abdb6), acessíveis só pela sua conta. Funciona offline e sincroniza quando a conexão volta.</p></section>`;
 }
 
 async function importarProgresso(p) {
@@ -734,7 +744,8 @@ document.addEventListener('click', async (ev) => {
     case 'encerrar': if (q) { q.items = q.items.slice(0, q.ans.length); fecharSessao(); } break;
     case 'dominei': S.cad.dom[a.dataset.k] = new Date().toISOString(); delete S.cad.rev[a.dataset.k]; salvar('cad'); render(); break;
     case 'revisar': {
-      const ks = pendentesRevisao();
+      const ass = S.errAss || '';
+      const ks = pendentesRevisao().filter((k) => { if (!ass) return true; const [fb_, fn] = ass.split('|'); if (k.split(':')[0] !== fb_) return false; if (fn === undefined) return true; const d = acharItem(k); return d && (d.n || '—') === fn; });
       const por = BK.map((b) => [b, ks.filter((k) => k.startsWith(b + ':')).map(acharItem).filter(Boolean)]).sort((x, y) => y[1].length - x[1].length);
       const [b, l] = por[0];
       if (l.length) iniciarSessao(embaralhar(l).slice(0, 40), 'Revisão do caderno · ' + BANCOS[b], b, true);
@@ -804,6 +815,7 @@ document.addEventListener('change', async (ev) => {
   } else if (act === 'motivo') {
     if (t.value) S.cad.mot[t.dataset.k] = t.value; else delete S.cad.mot[t.dataset.k]; salvar('cad');
   } else if (act === 'errFiltro') { S.errFiltro = t.value; render(); }
+  else if (act === 'errAss') { S.errAss = t.value; local.set('errAss', t.value); render(); }
   else if (act === 'impBanco' || act === 'impProg') {
     const f = t.files[0]; if (!f) return;
     try {
